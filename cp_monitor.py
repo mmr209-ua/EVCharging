@@ -2,7 +2,7 @@ import sys
 import json
 import time
 from kafka import KafkaProducer
-from topics import *
+from EV_Topics import *
 
 def main():
     if len(sys.argv) < 3:
