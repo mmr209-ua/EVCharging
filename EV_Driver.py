@@ -50,7 +50,7 @@ def main():
         producer.send(CHARGING_REQUESTS, request)
         producer.flush()
 
-        supply_finished = False
+        supply_finished = False 
 
         # Esperar actualizaciones
         while not supply_finished:
