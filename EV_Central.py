@@ -2,8 +2,13 @@ import sys
 import threading
 import json
 from kafka import KafkaConsumer, KafkaProducer
+<<<<<<< HEAD
+from db import *
+from topics import *
+=======
 from EV_db import *
 from EV_Topics import *
+>>>>>>> main
 
 def main():
     if len(sys.argv) < 4:
@@ -18,11 +23,15 @@ def main():
     conn = get_connection(db_host)
     init_db(conn)
 
+<<<<<<< HEAD
+    # Producer -> envía mensajes a los otros módulos
+=======
     # Al arrancar, comprobar si ya hay CPs conectados y mostrarlos por pantalla
     CPs_conectados(conn)
 
     # Producer -> envía mensajes a los otros módulos
     # CP_CONTROL, ...
+>>>>>>> main
     producer = KafkaProducer(
         bootstrap_servers=broker,
         value_serializer=lambda v: json.dumps(v).encode("utf-8")
@@ -31,6 +40,20 @@ def main():
     # Consumers -> reciben mensajes de otros módulos
     consumers = {
         CP_REGISTER: KafkaConsumer(CP_REGISTER, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
+<<<<<<< HEAD
+        CP_STATUS: KafkaConsumer(CP_STATUS, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
+        CP_ALERTS: KafkaConsumer(CP_ALERTS, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
+        CP_HEALTH: KafkaConsumer(CP_HEALTH, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
+        CP_CONSUMPTION: KafkaConsumer(CP_CONSUMPTION, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
+        CP_SUPPLY_COMPLETE: KafkaConsumer(CP_SUPPLY_COMPLETE, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
+        CHARGING_REQUESTS: KafkaConsumer(CHARGING_REQUESTS, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
+        FILE_REQUESTS: KafkaConsumer(FILE_REQUESTS, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central")
+    }
+
+    print("[CENTRAL] Escuchando en 4 topics...")
+
+    # Central está a la escucha en los distintos topics
+=======
         CP_HEALTH: KafkaConsumer(CP_HEALTH, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
         CP_STATUS: KafkaConsumer(CP_STATUS, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
         CP_CONSUMPTION: KafkaConsumer(CP_INFO, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
@@ -41,11 +64,75 @@ def main():
     # Central está a la escucha en distintos topics
     print("[CENTRAL] Escuchando en varios topics...")
 
+>>>>>>> main
     def consume_loop(topic, consumer):
         for msg in consumer:
             event = msg.value
             print(f"[CENTRAL] Mensaje en {topic}: {event}")
 
+<<<<<<< HEAD
+            # Registrar CP en BD
+            if topic == CP_REGISTER:
+                id = event["idCP"]
+                precio = event["precio"]
+                ubicacion = event["ubicacion"]
+
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO CP (idCP, estado, precio, ubicacion)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE precio=%s, ubicacion=%s;
+                """, (id, "DESCONECTADO", precio, ubicacion, precio, ubicacion))
+                conn.commit()
+
+                print(f"[CENTRAL] Registrado CP {id} en BD")
+
+            # Cambiar el estado del CP
+            elif topic == CP_STATUS:
+                id = event["idCP"]
+                estado = event["estado"]
+                cursor = conn.cursor()
+                cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", (estado, id))
+                conn.commit()
+                print(f"[CENTRAL] Estado actualizado CP {id}: {estado}")
+
+            # 
+            elif topic == CP_ALERTS:
+                id = event["idCP"]
+                alerta = event["alerta"]
+                cursor = conn.cursor()
+                cursor.execute("UPDATE CP SET alerta=%s WHERE idCP=%s;", (alerta, id))
+                conn.commit()
+                print(f"[CENTRAL] Alerta registrada CP {id}: {alerta}")
+
+            elif topic == CP_HEALTH:
+                id = event["idCP"]
+                salud = event["salud"]
+                cursor = conn.cursor()
+                cursor.execute("UPDATE CP SET salud=%s WHERE idCP=%s;", (salud, id))
+                conn.commit()
+                print(f"[CENTRAL] Salud CP {id}: {salud}")
+
+            elif topic == CP_CONSUMPTION:
+                id = event["idCP"]
+                consumo = event["consumo"]
+                cursor = conn.cursor()
+                cursor.execute("UPDATE CP SET consumo_actual=%s WHERE idCP=%s;", (consumo, id))
+                conn.commit()
+                print(f"[CENTRAL] Consumo actualizado CP {id}: {consumo}")
+
+            elif topic == CP_SUPPLY_COMPLETE:
+                id = event["idCP"]
+                ticket = event["ticket"]
+                producer.send(DRIVER_SUPPLY_COMPLETE, {"idCP": id, "ticket": ticket})
+                print(f"[CENTRAL] Suministro finalizado CP {id}, ticket enviado")
+
+            elif topic == CHARGING_REQUESTS:
+                print(f"[CENTRAL] Petición de recarga recibida: {event}")
+
+            elif topic == FILE_REQUESTS:
+                print(f"[CENTRAL] Petición desde archivo: {event}")
+=======
             # Registrar un CP en la base de datos
             if topic == CP_REGISTER:
                 registrar_CP(event, conn)
@@ -111,19 +198,25 @@ def main():
                     print("[CENTRAL] Enviada orden REANUDAR a todos los CPs")
                 else:
                     print("Uso: reanudar [<idCP>|todos]")
+>>>>>>> main
 
     # Cada consumer corre en su propio hilo
     for t, c in consumers.items():
         threading.Thread(target=consume_loop, args=(t, c), daemon=True).start()
 
+<<<<<<< HEAD
+=======
     # Añadimos un hilo para poder enviar distintas órdenes a los CPs de forma arbitraria
     threading.Thread(target=command_loop, args=(producer, conn), daemon=True).start()
 
+>>>>>>> main
     # Mantener proceso vivo
     while True:
         pass
 
 
+<<<<<<< HEAD
+=======
 # Comprobar si hay CPs conectados y mostrarlos por pantalla
 def CPs_conectados(conn):
     cursor = conn.cursor()
@@ -236,6 +329,7 @@ def enviar_ticket (event, conn, producer):
     cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("ACTIVADO", id))
 
 
+>>>>>>> main
 # Para evitar que se ejecute de nuevo el main cuando se llame desde otros módulos
 if __name__ == "__main__":
     main()
