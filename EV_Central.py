@@ -3,7 +3,7 @@ import os
 import threading
 import json
 from kafka import KafkaConsumer, KafkaProducer
-from EV_db import *
+from EV_DB import *
 from EV_Topics import *
 from colorama import init, Fore, Back, Style
 init(autoreset=True) # Para q los colores se reseteeen automaticamente después de cada print

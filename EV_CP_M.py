@@ -83,7 +83,7 @@ def main():
             if not fallo_prev:
                 alert_msg = {"type": "alert", "idCP": cp_id, "alerta": "ENGINE_NO_RESPONDE"}
                 send_to_central(alert_msg)
-                print(f"[CP_MONITOR {cp_id}] ❌ ENGINE no responde, alerta enviada")
+                print(f"[CP_MONITOR {cp_id}] ENGINE no responde, alerta enviada")
                 fallo_prev = True
             status_msg = {"type": "status", "idCP": cp_id, "estado": "AVERIADO"}
             send_to_central(status_msg)
@@ -93,7 +93,7 @@ def main():
             if fallo_prev:
                 health_msg = {"type": "health", "idCP": cp_id, "salud": "RECUPERADO"}
                 send_to_central(health_msg)
-                print(f"[CP_MONITOR {cp_id}] ✅ ENGINE recuperado")
+                print(f"[CP_MONITOR {cp_id}] ENGINE recuperado")
                 fallo_prev = False
 
             status_msg = {"type": "status", "idCP": cp_id, "estado": "ACTIVADO"}
@@ -103,5 +103,5 @@ def main():
 
         time.sleep(5)
 
-if _name_ == "_main_":
+if __name__ == "_main_":
     main()

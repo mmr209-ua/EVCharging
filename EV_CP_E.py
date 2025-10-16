@@ -5,7 +5,7 @@ import datetime
 import threading
 import socket
 from kafka import KafkaProducer, KafkaConsumer
-from topics import *
+from EV_Topics import *
 
 def main():
     if len(sys.argv) < 4:
@@ -137,5 +137,5 @@ def main():
     while True:
         time.sleep(1)
 
-if _name_ == "_main_":
+if __name__ == "_main_":
     main()
