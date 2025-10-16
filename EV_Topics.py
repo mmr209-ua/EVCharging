@@ -2,7 +2,7 @@
 CP_REGISTER = "cp_register"                 # Registro de nuevos CPs
 CP_HEALTH = "cp_health"                     # Monitorización de salud para detectar averías
 CP_STATUS = "cp_status"                     # Estados de los CPs (activo, suministrando, etc.)
-CP_CONSUMPTION = "cp_consumption"           # Información acerca del CP en tiempo real ()
+CP_CONSUMPTION = "cp_consumption"           # Información acerca del CP suminstrando en tiempo real (consumo, importe, id conductor)
 CP_SUPPLY_COMPLETE = "cp_supply_complete"	# Fin de suministro y ticket
 
 # Topics de comunicación Central -> CP
