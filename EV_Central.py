@@ -52,7 +52,7 @@ def consume_loop(topic, producer, consumer, conn):
             cambiar_estado_CP(event, conn)
             
         # Gestionar petición de autorización de recarga de suministro
-        elif topic == CHARGING_REQUESTS:
+        elif topic == SUPPLY_REQUEST_TO_CENTRAL:
             procesar_peticion_suministro(event, conn, producer)
 
         # Obtener info del consumo e importes del CP en tiempo real durante el suministro
@@ -146,7 +146,7 @@ def main():
         CP_STATUS: KafkaConsumer(CP_STATUS, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
         CP_CONSUMPTION: KafkaConsumer(CP_CONSUMPTION, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
         CP_SUPPLY_COMPLETE: KafkaConsumer(CP_SUPPLY_COMPLETE, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
-        CHARGING_REQUESTS: KafkaConsumer(CHARGING_REQUESTS, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
+        SUPPLY_REQUEST_TO_CENTRAL: KafkaConsumer(SUPPLY_REQUEST_TO_CENTRAL, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
     }
 
     # Cada consumer corre en su propio hilo
