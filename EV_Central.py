@@ -8,6 +8,9 @@ from EV_Topics import *
 from colorama import init, Fore, Back, Style
 init(autoreset=True) # Para q los colores se reseteeen automaticamente después de cada print
 
+# Evento global para detener todos los hilos
+stop_event = threading.Event()
+
 # Evento para señalizar la actualización de la pantalla
 actualizar_pantalla = threading.Event()
 
@@ -32,47 +35,54 @@ def limpiar_pantalla():
 # Bucle de consumo de mensajes
 def consume_loop(topic, producer, consumer, conn):
 
-    # Central está a la escucha en distintos topics
-    print("[CENTRAL] Escuchando en varios topics...")
+    try:
+        for msg in consumer:
+            event = msg.value
+            print(f"[CENTRAL] Mensaje en {topic}: {event}")
 
-    for msg in consumer:
-        event = msg.value
-        print(f"[CENTRAL] Mensaje en {topic}: {event}")
+            # Si se cierra central, sal del bucle
+            if stop_event.is_set():
+                break
 
-        # Registrar un CP en la base de datos
-        if topic == CP_REGISTER:
-            registrar_CP(event, conn)
+            # Registrar un CP en la base de datos
+            elif topic == CP_REGISTER:
+                registrar_CP(event, conn)
 
-        # Comprobar si ha habido alguna avería en el CP
-        elif topic == CP_HEALTH:
-            comprobar_salud_CP(event, conn)
+            # Comprobar si ha habido alguna avería en el CP
+            elif topic == CP_HEALTH:
+                comprobar_salud_CP(event, conn)
 
-        # Cambiar el estado del CP en la base de datos
-        elif topic == CP_STATUS:
-            cambiar_estado_CP(event, conn)
-            
-        # Gestionar petición de autorización de recarga de suministro
-        elif topic == SUPPLY_REQUEST_TO_CENTRAL:
-            procesar_peticion_suministro(event, conn, producer)
+            # Cambiar el estado del CP en la base de datos
+            elif topic == CP_STATUS:
+                cambiar_estado_CP(event, conn)
+                
+            # Gestionar petición de autorización de recarga de suministro
+            elif topic == SUPPLY_REQUEST_TO_CENTRAL:
+                procesar_peticion_suministro(event, conn, producer)
 
-        # Obtener info del consumo e importes del CP en tiempo real durante el suministro
-        elif topic == CP_CONSUMPTION:
-            monitorizar_CP(event)
+            # Obtener info del consumo e importes del CP en tiempo real durante el suministro
+            elif topic == CP_CONSUMPTION:
+                monitorizar_CP(event)
 
-        # Al finalizar el suministro se envía el ticket final al conductor y se cambia el estado del CP
-        elif topic == CP_SUPPLY_COMPLETE:
-            enviar_ticket(event, conn, producer)
+            # Al finalizar el suministro se envía el ticket final al conductor y se cambia el estado del CP
+            elif topic == CP_SUPPLY_COMPLETE:
+                enviar_ticket(event, conn, producer)
+    
+    # Capturar excepciones cuando se cierren lso consumers
+    except Exception as e:
+        print(f"[CENTRAL] Hilo de {topic} terminado.")
 
 
 # Hilo interactivo que permite enviar órdenes manuales a los CPs
 def command_loop(producer, conn):
 
     while True:
-        cmd = input("[CENTRAL] Escribe comando (parar/reanudar/listar/salir): ").strip().lower()
+        cmd = input("[CENTRAL] Escribe comando (parar <id-CP>/reanudar <id-CP>/listar/salir): ").strip().lower()
 
         if cmd == "salir":
             print("[CENTRAL] Cerrando CENTRAL...")
-            sys.exit(0)
+            stop_event.set()
+            break
 
         elif cmd == "listar":
             cursor = conn.cursor()
@@ -107,10 +117,10 @@ def command_loop(producer, conn):
                 print("Uso: reanudar [<idCP>|todos]")
 
 
-# Hilo que refresca la pantalla cada cierto tiempo
+# Hilo que refresca la pantalla
 def mostrar_CPs_loop(conn):
-    while True:
-        actualizar_pantalla.wait(timeout=1)  # Espera señal o refresca cada segundo
+    while not stop_event.is_set():
+        actualizar_pantalla.wait()  # Espera a que alguien mande señal para actualizar pantalla
         actualizar_pantalla.clear()
         mostrar_CPs(conn)
 
@@ -149,6 +159,9 @@ def main():
         SUPPLY_REQUEST_TO_CENTRAL: KafkaConsumer(SUPPLY_REQUEST_TO_CENTRAL, bootstrap_servers=broker, value_deserializer=lambda m: json.loads(m.decode("utf-8")), group_id="central"),
     }
 
+    # Central está a la escucha en distintos topics
+    print("[CENTRAL] Escuchando en varios topics...")
+
     # Cada consumer corre en su propio hilo
     for topic, consumer in consumers.items():
         threading.Thread(target=consume_loop, args=(topic, producer, consumer, conn), daemon=True).start()
@@ -159,9 +172,19 @@ def main():
     # Hilo para refrescar la pantalla cada cierto tiempo
     threading.Thread(target=mostrar_CPs_loop, args=(conn,), daemon=True).start()
 
-    # Mantener proceso vivo
-    while True:
-        pass
+    try:
+        # Bloquea el hilo ppal hasta que algo active stop_event (ej: el comando salir)
+        stop_event.wait()
+
+    finally:
+        # Cierre ordenado
+        print("[CENTRAL] Cerrando conexiones...")
+        for c in consumers.values():
+            c.close()
+        producer.close()
+        conn.close()
+        print("[CENTRAL] Todos los recursos cerrados correctamente.")
+        print("[CENTRAL] Apagando CENTRAL. ¡Hasta luego!")
 
 
 # Comprobar si hay CPs conectados y mostrarlos por pantalla
