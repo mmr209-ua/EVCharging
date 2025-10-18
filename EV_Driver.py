@@ -94,7 +94,7 @@ def escuchar_comandos(driver_id, producer_central, producer_cp, consumer_status,
 # ----------------------------------------
 def main():
     if len(sys.argv) < 3:
-        print("Uso: python driver.py <broker_ip:puerto> <driver_id>")
+        print("Uso: py EV_Driver.py <broker_ip:puerto> <driver_id>")
         sys.exit(1)
 
     broker = sys.argv[1]

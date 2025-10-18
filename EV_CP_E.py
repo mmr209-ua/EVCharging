@@ -1,141 +1,90 @@
 import sys
 import json
-import time
-import datetime
 import threading
-import socket
-from kafka import KafkaProducer, KafkaConsumer
+import time
+import msvcrt
+from kafka import KafkaConsumer, KafkaProducer
 from EV_Topics import *
 
+estado_salud = "OK"
+id_cp = None
+
+def escuchar_comandos(consumer, producer):
+    global estado_salud
+    for msg in consumer:
+        event = msg.value
+        if msg.topic == CP_AUTHORIZE_SUPPLY and event["idCP"] == id_cp:
+            if estado_salud == "OK":
+                print(f"[ENGINE {id_cp}] Autorizado. Iniciando suministro...")
+                # Simular consumo
+                for i in range(5):
+                    consumo = {"idCP": id_cp, "kwh": i+1, "importe": (i+1)*0.3, "conductor": "user123"}
+                    producer.send(CP_CONSUMPTION, consumo)
+                    time.sleep(1)
+                # Finalizar
+                ticket = {"kwh": 5, "importe": 1.5, "fecha": time.ctime()}
+                producer.send(CP_SUPPLY_COMPLETE, {"idCP": id_cp, "ticket": ticket})
+                print(f"[ENGINE {id_cp}] Suministro finalizado.")
+            else:
+                print(f"[ENGINE {id_cp}] No se puede suministrar. Estado KO.")
+
+        elif msg.topic == CP_CONTROL and event["idCP"] in [id_cp, "ALL"]:
+            print(f"[ENGINE {id_cp}] Acción recibida: {event['accion']}")
+
+def responder_salud(server_socket):
+    global estado_salud
+    while True:
+        conn, _ = server_socket.accept()
+        data = conn.recv(1024).decode()
+        if data == "PING":
+            conn.send(estado_salud.encode())
+        conn.close()
+
+def simular_fallos():
+    global estado_salud
+    while True:
+        if msvcrt.kbhit():
+            tecla = msvcrt.getwch()
+            if tecla.lower() == "k":
+                estado_salud = "KO"
+                print(f"[ENGINE {id_cp}] Estado cambiado a KO")
+            elif tecla.lower() == "o":
+                estado_salud = "OK"
+                print(f"[ENGINE {id_cp}] Estado cambiado a OK")
+        time.sleep(0.1)
+
 def main():
-    if len(sys.argv) < 4:
-        print("Uso: python cp_engine.py <broker_ip:puerto> <cp_id> <listen_port>")
+    global id_cp
+    if len(sys.argv) < 3:
+        print("Uso: python EV_CP_E.py <broker_ip:puerto> <id_cp>")
         sys.exit(1)
 
     broker = sys.argv[1]
-    cp_id = str(sys.argv[2])
-    listen_port = int(sys.argv[3])
+    id_cp = sys.argv[2]
 
-    # --- PRODUCTOR KAFKA ---
-    producer = KafkaProducer(
-        bootstrap_servers=broker,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8")
-    )
+    producer = KafkaProducer(bootstrap_servers=[broker],
+                             value_serializer=lambda v: json.dumps(v).encode("utf-8"))
 
-    # --- CONSUMIDORES KAFKA ---
-    consumer_control = KafkaConsumer(
-        CP_CONTROL,
-        bootstrap_servers=broker,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        group_id=f"cp_engine_{cp_id}"
-    )
-    consumer_authorize = KafkaConsumer(
-        CP_AUTHORIZE_SUPPLY,
-        bootstrap_servers=broker,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        group_id=f"cp_engine_{cp_id}"
-    )
+    consumer = KafkaConsumer(CP_AUTHORIZE_SUPPLY, CP_CONTROL,
+                             bootstrap_servers=[broker],
+                             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                             group_id=f"engine_{id_cp}",
+                             auto_offset_reset='earliest')
 
-    estado = "ACTIVADO"
-    en_suministro = False
+    # Socket para responder al monitor
+    import socket
+    server_socket = socket.socket()
+    server_socket.bind(("localhost", 6000 + int(id_cp)))  # Puerto único por CP
+    server_socket.listen(1)
 
-    # ==========================================================
-    # SERVIDOR TCP para monitor
-    # ==========================================================
-    def health_server():
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("0.0.0.0", listen_port))
-        s.listen(1)
-        print(f"[CP_ENGINE {cp_id}] Health server escuchando en puerto {listen_port}")
+    threading.Thread(target=escuchar_comandos, args=(consumer, producer), daemon=True).start()
+    threading.Thread(target=responder_salud, args=(server_socket,), daemon=True).start()
+    threading.Thread(target=simular_fallos, daemon=True).start()
 
-        while True:
-            conn, addr = s.accept()
-            try:
-                data = conn.recv(1024).decode().strip()
-                if data == "PING":
-                    conn.sendall(b"PONG")
-            except Exception as e:
-                print(f"[CP_ENGINE {cp_id}] Error en health_server: {e}")
-            finally:
-                conn.close()
+    print(f"[ENGINE {id_cp}] Esperando comandos...")
 
-    threading.Thread(target=health_server, daemon=True).start()
-
-    # ==========================================================
-    # FUNCION PARA SIMULAR SUMINISTRO
-    # ==========================================================
-    def start_supply():
-        nonlocal estado, en_suministro
-        if estado != "ACTIVADO":
-            print(f"[CP_ENGINE {cp_id}] No puede suministrar: estado {estado}")
-            return
-
-        estado = "SUMINISTRANDO"
-        en_suministro = True
-        print(f"[CP_ENGINE {cp_id}] Suministro iniciado")
-        consumo_total = 0
-        hora_inicio = datetime.datetime.now().isoformat()
-
-        for _ in range(5):
-            if estado != "SUMINISTRANDO":
-                print(f"[CP_ENGINE {cp_id}] Suministro interrumpido")
-                en_suministro = False
-                return
-            consumo_total += 1
-            producer.send(CP_CONSUMPTION, {"idCP": cp_id, "consumo": consumo_total})
-            time.sleep(1)
-
-        hora_fin = datetime.datetime.now().isoformat()
-        ticket = {
-            "energia": consumo_total,
-            "precio_total": round(consumo_total * 0.25, 2),
-            "hora_inicio": hora_inicio,
-            "hora_fin": hora_fin
-        }
-        producer.send(CP_SUPPLY_COMPLETE, {"idCP": cp_id, "ticket": ticket})
-        print(f"[CP_ENGINE {cp_id}] Ticket enviado: {ticket}")
-
-        estado = "ACTIVADO"
-        en_suministro = False
-
-    # ==========================================================
-    # CONSUMIDOR DE COMANDOS
-    # ==========================================================
-    def consume_control_loop():
-        nonlocal estado
-        for msg in consumer_control:
-            event = msg.value
-            if str(event.get("idCP")) != cp_id:
-                continue
-            action = event.get("action")
-            if action == "stop":
-                estado = "PARADO"
-                producer.send(CP_STATUS, {"idCP": cp_id, "estado": "PARADO"})
-                print(f"[CP_ENGINE {cp_id}] Parado por orden central")
-            elif action == "resume":
-                estado = "ACTIVADO"
-                producer.send(CP_STATUS, {"idCP": cp_id, "estado": "ACTIVADO"})
-                print(f"[CP_ENGINE {cp_id}] Reactivado por central")
-
-    # ==========================================================
-    # CONSUMIDOR DE AUTORIZACIONES
-    # ==========================================================
-    def consume_authorize_loop():
-        for msg in consumer_authorize:
-            event = msg.value
-            if str(event.get("idCP")) != cp_id:
-                continue
-            if event.get("action") == "authorize":
-                print(f"[CP_ENGINE {cp_id}] Autorizado para suministrar")
-                start_supply()
-
-    threading.Thread(target=consume_control_loop, daemon=True).start()
-    threading.Thread(target=consume_authorize_loop, daemon=True).start()
-
-    print(f"[CP_ENGINE {cp_id}] Esperando comandos de CENTRAL...")
     while True:
         time.sleep(1)
 
-if __name__ == "_main_":
+if __name__ == "__main__":
     main()
