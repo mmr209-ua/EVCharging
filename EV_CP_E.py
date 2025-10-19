@@ -28,8 +28,10 @@ def escuchar_comandos(consumer, producer):
             else:
                 print(f"[ENGINE {id_cp}] No se puede suministrar. Estado KO.")
 
-        elif msg.topic == CP_CONTROL and event["idCP"] in [id_cp, "ALL"]:
-            print(f"[ENGINE {id_cp}] Acción recibida: {event['accion']}")
+        elif msg.topic == CP_CONTROL and event["idCP"] in [id_cp, "todos"]:
+            accion = event["accion"]
+            destino = event["idCP"]
+            print(f"[ENGINE {id_cp}] Acción recibida: {accion} (para {destino})")
 
 def responder_salud(server_socket):
     global estado_salud
@@ -42,16 +44,40 @@ def responder_salud(server_socket):
 
 def simular_fallos():
     global estado_salud
+    buffer = ""
     while True:
         if msvcrt.kbhit():
-            tecla = msvcrt.getwch()
-            if tecla.lower() == "k":
-                estado_salud = "KO"
-                print(f"[ENGINE {id_cp}] Estado cambiado a KO")
-            elif tecla.lower() == "o":
-                estado_salud = "OK"
-                print(f"[ENGINE {id_cp}] Estado cambiado a OK")
+            char = msvcrt.getwch()
+
+            # ENTER → procesar comando
+            if char == "\r":
+                comando = buffer.strip().lower()
+                buffer = ""
+
+                if comando == "ko":
+                    estado_salud = "KO"
+                    print(f"\n[ENGINE {id_cp}] Estado cambiado a KO")
+                elif comando == "ok":
+                    estado_salud = "OK"
+                    print(f"\n[ENGINE {id_cp}] Estado cambiado a OK")
+                elif comando:
+                    print(f"\n[ENGINE {id_cp}] Comando no reconocido: {comando}")
+
+                print("> ", end="", flush=True)
+
+            # Retroceso
+            elif char == "\b":
+                if buffer:
+                    buffer = buffer[:-1]
+                    print("\b \b", end="", flush=True)
+
+            # Cualquier otro carácter
+            else:
+                buffer += char
+                print(char, end="", flush=True)
+
         time.sleep(0.1)
+
 
 def main():
     global id_cp
@@ -62,9 +88,19 @@ def main():
     broker = sys.argv[1]
     id_cp = sys.argv[2]
 
-    producer = KafkaProducer(bootstrap_servers=[broker],
-                             value_serializer=lambda v: json.dumps(v).encode("utf-8"))
+    # Crear producer   
+    producer = KafkaProducer(
+        bootstrap_servers=[broker],
+        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        acks='all',
+        retries=5
+    )
+    
+    # Enviar estado actual al arrancar
+    producer.send(CP_STATUS, {"idCP": id_cp, "estado": estado_salud})
+    producer.flush()
 
+    # Crear consumer
     consumer = KafkaConsumer(CP_AUTHORIZE_SUPPLY, CP_CONTROL,
                              bootstrap_servers=[broker],
                              value_deserializer=lambda m: json.loads(m.decode("utf-8")),
@@ -81,6 +117,13 @@ def main():
     threading.Thread(target=responder_salud, args=(server_socket,), daemon=True).start()
     threading.Thread(target=simular_fallos, daemon=True).start()
 
+    print("\n==========================================")
+    print(f"       ENGINE CP {id_cp} INICIADO")
+    print("============================================")
+    print("[ENGINE] Comandos disponibles desde teclado:")
+    print("  - Pulsar 'k' → Estado KO (averiado)")
+    print("  - Pulsar 'o' → Estado OK (recuperado)")
+    print("============================================\n")
     print(f"[ENGINE {id_cp}] Esperando comandos...")
 
     while True:

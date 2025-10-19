@@ -23,21 +23,38 @@ def main():
     producer.send(CP_REGISTER, registro)
     print(f"[MONITOR {id_cp}] Registrado en la central.")
 
+    ultimo_estado_reportado = None
+
     while True:
         try:
             with socket.create_connection(("localhost", 6000 + int(id_cp)), timeout=2) as sock:
                 sock.send(b"PING")
                 respuesta = sock.recv(1024).decode()
+
                 if respuesta == "KO":
-                    print(f"[MONITOR {id_cp}] ¡Fallo detectado! Reportando a central.")
-                    producer.send(CP_HEALTH, {"idCP": id_cp, "salud": "KO"})
+                    if ultimo_estado_reportado != "KO":
+                        print(f"[MONITOR {id_cp}] ¡Fallo detectado! Reportando a central.")
+                        producer.send(CP_HEALTH, {"idCP": id_cp, "salud": "KO"})
+                        ultimo_estado_reportado = "KO"
+                    else:
+                        print(f"[MONITOR {id_cp}] CP sigue en estado KO.")
                 else:
-                    print(f"[MONITOR {id_cp}] CP saludable.")
+                    if ultimo_estado_reportado != "OK":
+                        print(f"[MONITOR {id_cp}] CP saludable. Reportando recuperación.")
+                        producer.send(CP_HEALTH, {"idCP": id_cp, "salud": "OK"})
+                        ultimo_estado_reportado = "OK"
+                    else:
+                        print(f"[MONITOR {id_cp}] CP sigue saludable.")
         except Exception:
-            print(f"[MONITOR {id_cp}] No se pudo contactar con ENGINE. Reportando KO.")
-            producer.send(CP_HEALTH, {"idCP": id_cp, "salud": "KO"})
+            if ultimo_estado_reportado != "KO":
+                print(f"[MONITOR {id_cp}] No se pudo contactar con ENGINE. Reportando KO.")
+                producer.send(CP_HEALTH, {"idCP": id_cp, "salud": "KO"})
+                ultimo_estado_reportado = "KO"
+            else:
+                print(f"[MONITOR {id_cp}] ENGINE sigue sin responder.")
 
         time.sleep(1)
+
 
 if __name__ == "__main__":
     main()
