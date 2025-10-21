@@ -1,97 +1,10 @@
+# EV_Driver
 import sys
 import json
 import time
-import threading
 from kafka import KafkaProducer, KafkaConsumer
 from EV_Topics import *
 
-# ----------------------------------------
-# Enviar una solicitud de suministro
-# ----------------------------------------
-def solicitar_recarga(cp_id, driver_id, producer_central, consumer_status, consumer_complete):
-    print(f"[DRIVER {driver_id}] Solicitando carga en CP {cp_id}...")
-    request = {"driver_id": driver_id, "cp_id": int(cp_id)}
-
-    # Enviar a CENTRAL
-    producer_central.send(SUPPLY_REQUEST_TO_CENTRAL, request)
-    producer_central.flush()
-
-    supply_finished = False
-
-    # Esperar actualizaciones
-    while not supply_finished:
-        # Estado del suministro
-        for msg in consumer_status:
-            event = msg.value
-            if event.get("driver_id") != driver_id or event.get("cp_id") != int(cp_id):
-                continue
-            print(f"[DRIVER {driver_id}] Estado suministro CP {cp_id}: {event.get('status')}")
-            if event.get("status") == "END":
-                break
-
-        # Ticket final
-        for msg in consumer_complete:
-            event = msg.value
-            if event.get("driver_id") != driver_id or event.get("cp_id") != int(cp_id):
-                continue
-            ticket = event.get("ticket")
-            print(f"[DRIVER {driver_id}] Suministro finalizado CP {cp_id}, ticket: {ticket}")
-            supply_finished = True
-            break
-
-    print(f"[DRIVER {driver_id}] Esperando 4 segundos antes de la siguiente solicitud...\n")
-    time.sleep(4)
-
-
-# ----------------------------------------
-# Solicitudes automáticas desde fichero
-# ----------------------------------------
-def procesar_solicitudes_automaticas(driver_id, producer_central, consumer_status, consumer_complete):
-    try:
-        with open("solicitudes.txt", "r") as f:
-            cp_list = [line.strip() for line in f if line.strip()]
-    except FileNotFoundError:
-        print("[DRIVER] No se encontró solicitudes.txt.")
-        return
-
-    for cp_id in cp_list:
-        solicitar_recarga(cp_id, driver_id, producer_central, consumer_status, consumer_complete)
-
-
-# ----------------------------------------
-# Comandos manuales desde teclado
-# ----------------------------------------
-def escuchar_comandos(driver_id, producer_central, producer_cp, consumer_status, consumer_complete):
-    while True:
-        cmd = input(f"[DRIVER {driver_id}] Escribe comando (cp <idCP> / central / salir): ").strip().lower()
-
-        if cmd == "salir":
-            print(f"[DRIVER {driver_id}] Cerrando driver...")
-            sys.exit(0)
-
-        elif cmd.startswith("cp "):
-            # Solicitud directa al CP (sin pasar por CENTRAL)
-            parts = cmd.split()
-            if len(parts) == 2 and parts[1].isdigit():
-                cp_id = int(parts[1])
-                print(f"[DRIVER {driver_id}] Enviando solicitud DIRECTA a CP {cp_id}...")
-                producer_cp.send(SUPPLY_REQUEST_TO_CP, {"driver_id": driver_id, "cp_id": cp_id})
-                producer_cp.flush()
-            else:
-                print("Uso: cp <idCP>  (idCP debe ser numérico)")
-
-        elif cmd == "central":
-            # Solicitud normal (pasa por CENTRAL) — lee lista de CPs desde el archivo
-            print(f"[DRIVER {driver_id}] Procesando solicitudes desde archivo solicitudes.txt...")
-            procesar_solicitudes_automaticas(driver_id, producer_central, consumer_status, consumer_complete)
-
-        else:
-            print("Comando no reconocido. Opciones: cp <idCP> / central / salir")
-
-
-# ----------------------------------------
-# Programa principal
-# ----------------------------------------
 def main():
     if len(sys.argv) < 3:
         print("Uso: python driver.py <broker_ip:puerto> <driver_id>")
@@ -100,43 +13,114 @@ def main():
     broker = sys.argv[1]
     driver_id = sys.argv[2]
 
-    # Producers
-    producer_central = KafkaProducer(
-        bootstrap_servers=broker,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8")
-    )
-    producer_cp = KafkaProducer(
+    # Producer -> envía solicitudes de recarga
+    producer = KafkaProducer(
         bootstrap_servers=broker,
         value_serializer=lambda v: json.dumps(v).encode("utf-8")
     )
 
-    # Consumers
-    consumer_status = KafkaConsumer(
-        SUPPLY_STATUS,
+    # Consumer -> recibe actualizaciones de consumo (cada segundo)
+    consumer_consumption = KafkaConsumer(
+        CP_CONSUMPTION,
         bootstrap_servers=broker,
         value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        group_id=f"driver_{driver_id}"
+        group_id=f"driver_{driver_id}_cons"
     )
-    consumer_complete = KafkaConsumer(
+
+    # Consumer -> recibe ticket final del suministro y autorizaciones
+    consumer_ticket = KafkaConsumer(
         DRIVER_SUPPLY_COMPLETE,
         bootstrap_servers=broker,
         value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        group_id=f"driver_{driver_id}"
+        group_id=f"driver_{driver_id}_ticket"
     )
 
-    print(f"[DRIVER {driver_id}] Escuchando en topics: {SUPPLY_STATUS}, {DRIVER_SUPPLY_COMPLETE}")
+    print(f"[DRIVER {driver_id}] Escuchando topics: {CP_CONSUMPTION}, {DRIVER_SUPPLY_COMPLETE}")
 
-    # Hilo 1: solicitudes automáticas
-    threading.Thread(
-        target=procesar_solicitudes_automaticas,
-        args=(driver_id, producer_central, consumer_status, consumer_complete),
-        daemon=True
-    ).start()
+    # Leer solicitudes desde archivo (lista de CPs)
+    try:
+        with open("solicitudes.txt", "r") as f:
+            cp_list = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        print("[DRIVER] No se encontró solicitudes.txt — usando CP=1 por defecto.")
+        cp_list = ["1"]
 
-    # Hilo 2: comandos manuales
-    escuchar_comandos(driver_id, producer_central, producer_cp, consumer_status, consumer_complete)
+    for cp_id in cp_list:
+        print(f"\n[DRIVER {driver_id}] 🚗 Solicitando carga en CP {cp_id}...")
+        request = {"idDriver": driver_id, "idCP": cp_id}
+        producer.send(CHARGING_REQUESTS, request)
+        producer.flush()
 
+        supply_finished = False
+        suministro_activo = False
+        ultimo_consumo = None
+        
+        # CORRECCIÓN ERROR 3: Esperar respuesta de autorización
+        print(f"[DRIVER {driver_id}] ⏳ Esperando autorización de CENTRAL...")
 
+        while not supply_finished:
+            # 1️⃣ CORRECCIÓN ERROR 3: Revisar si hay respuesta de autorización/rechazo
+            for msg in consumer_ticket:
+                event = msg.value
+                ticket_info = event.get("ticket", {})
+                
+                # Verificar que el mensaje es para este driver y CP
+                if str(ticket_info.get("idDriver")) != str(driver_id):
+                    continue
+                    
+                estado_respuesta = ticket_info.get("estado")
+                motivo = ticket_info.get("motivo", "")
+                
+                if estado_respuesta == "AUTORIZADO":
+                    print(f"[DRIVER {driver_id}] ✅ AUTORIZADO para cargar en CP {cp_id}")
+                    print(f"[DRIVER {driver_id}] 💡 {ticket_info.get('mensaje', 'Puede comenzar el suministro')}")
+                    suministro_activo = True
+                    break
+                elif estado_respuesta == "RECHAZADO":
+                    print(f"[DRIVER {driver_id}] ❌ RECHAZADO en CP {cp_id}: {motivo}")
+                    supply_finished = True
+                    break
+                elif ticket_info.get("energia") is not None:  # Ticket final
+                    print(f"[DRIVER {driver_id}] ✅ RECARGA COMPLETADA en CP {cp_id}")
+                    print(f"[DRIVER {driver_id}] 🧾 TICKET FINAL:")
+                    print(f"    Energía: {ticket_info.get('energia', 0)} kWh")
+                    print(f"    Importe: {ticket_info.get('precio_total', 0)} €")
+                    print(f"    Inicio: {ticket_info.get('hora_inicio', '')}")
+                    print(f"    Fin: {ticket_info.get('hora_fin', '')}")
+                    if ticket_info.get("motivo"):
+                        print(f"    Motivo: {ticket_info.get('motivo')}")
+                    supply_finished = True
+                    break
+            
+            if supply_finished:
+                break
 
-if __name__ == "__main__":
+            # 2️⃣ CORRECCIÓN ERROR 2: Mostrar actualizaciones de consumo durante suministro
+            if suministro_activo:
+                for msg in consumer_consumption:
+                    data = msg.value
+                    if str(data.get("idCP")) != str(cp_id):
+                        continue
+                    
+                    consumo_actual = data.get("consumo", 0)
+                    importe_actual = data.get("importe", 0)
+                    
+                    # Mostrar solo si hay cambio en el consumo
+                    if consumo_actual != ultimo_consumo:
+                        print(f"[DRIVER {driver_id}] 🔋 CP {cp_id} -> {consumo_actual} kWh / {importe_actual} €")
+                        ultimo_consumo = consumo_actual
+                    
+                    break  # salimos para seguir revisando ticket
+
+            time.sleep(0.5)  # Pequeña pausa para no saturar
+
+        if not supply_finished and suministro_activo:
+            print(f"[DRIVER {driver_id}] ⚠️ Suministro interrumpido inesperadamente")
+
+        print(f"[DRIVER {driver_id}] Esperando 4 segundos antes de la siguiente solicitud...")
+        time.sleep(4)
+
+    print(f"[DRIVER {driver_id}] 🏁 Todas las recargas completadas")
+
+if _name_ == "_main_":
     main()
