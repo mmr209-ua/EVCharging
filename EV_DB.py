@@ -2,9 +2,9 @@
 import mysql.connector
 from mysql.connector import errorcode
 
-DB_NAME = "EV_DB"
+DB_NAME = "EVCharging"
 DB_USER = "root"
-DB_PASSWORD = "programacion2"
+DB_PASSWORD = "password"
 
 def get_connection(db_host):
     """
