@@ -279,5 +279,5 @@ def main():
     except KeyboardInterrupt:
         print("[CENTRAL] Terminando por KeyboardInterrupt.")
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()
