@@ -94,11 +94,7 @@ def main():
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
         acks='all',
         retries=5
-    )
-    
-    # Enviar estado actual al arrancar
-    producer.send(CP_STATUS, {"idCP": id_cp, "estado": estado_salud})
-    producer.flush()
+    ) 
 
     # Crear consumer
     consumer = KafkaConsumer(CP_AUTHORIZE_SUPPLY, CP_CONTROL,

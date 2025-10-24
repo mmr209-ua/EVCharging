@@ -82,15 +82,20 @@ def consume_loop(topic, producer, consumer, db_host):
 
 
 # ---- Hilo interactivo que permite escribir comandos ----
-def command_loop(producer, conn):
+def command_loop(producer, db_host):
     buffer = ""
+    conn = None
+
     try:
+        # Intentar conexión inicial
+        conn = get_connection(db_host)
+
         while not stop_event.is_set():
-            # Si hay una tecla pulsada
+            # Leer entrada no bloqueante
             if msvcrt.kbhit():
                 char = msvcrt.getwch()
 
-                # Si se pulsa ENTER -> procesar comando
+                # ENTER -> procesar comando
                 if char == "\r":
                     print()
                     cmd = buffer.strip().lower()
@@ -100,76 +105,87 @@ def command_loop(producer, conn):
                         print("> ", end="", flush=True)
                         continue
 
-                    # Comando para cerrar la central
+                    # ---- SALIR ----
                     if cmd == "salir":
                         print("\n[CENTRAL] Cerrando CENTRAL...")
                         stop_event.set()
                         break
 
-                    # Mostrar lista de CPs
-                    elif cmd == "listar":
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT idCP, estado FROM CP;")
-                        cps = cursor.fetchall()
-                        print("\n[CENTRAL] Lista de CPs:")
-                        for idCP, estado in cps:
-                            print(f"  - CP {idCP}: {estado}")
-                        print()
-
-                    # Enviar orden PARAR
+                    # ---- PARAR ----
                     elif cmd.startswith("parar"):
                         parts = cmd.split()
-
                         if len(parts) == 2:
                             target = parts[1]
-                            cursor = conn.cursor()
+                            try:
+                                cursor = conn.cursor()
 
-                            if target == "todos":
-                                print(target)
-                                cursor.execute("UPDATE CP SET estado=%s;", ("PARADO",))
-                                print("[CENTRAL] Enviada orden PARAR a todos los CPs")
-                            else:
-                                cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("PARADO", target))
-                                print(f"[CENTRAL] Enviada orden PARAR a CP {target}")
+                                if target == "todos":
+                                    cursor.execute("UPDATE CP SET estado=%s;", ("PARADO",))
+                                    print("[CENTRAL] Enviada orden PARAR a todos los CPs")
+                                else:
+                                    cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("PARADO", target))
+                                    print(f"[CENTRAL] Enviada orden PARAR a CP {target}")
 
-                            conn.commit()
-                            producer.send(CP_CONTROL, {"accion": "PARAR", "idCP": target})
-                            producer.flush()                            
-                            actualizar_pantalla.set()
+                                conn.commit()
+                                producer.send(CP_CONTROL, {"accion": "PARAR", "idCP": target})
+                                producer.flush()
+                                actualizar_pantalla.set()
 
-                    # Enviar orden REANUDAR
+                            except Exception as e:
+                                print(f"[CENTRAL][DB] Error al ejecutar PARAR: {e}")
+                                try:
+                                    conn.close()
+                                except:
+                                    pass
+                                time.sleep(2)
+                                print("[CENTRAL][DB] Reconectando a la base de datos...")
+                                conn = get_connection(db_host)
+                                print("[CENTRAL][DB] Reconexión exitosa.")
+
+                    # ---- REANUDAR ----
                     elif cmd.startswith("reanudar"):
                         parts = cmd.split()
-
                         if len(parts) == 2:
                             target = parts[1]
-                            cursor = conn.cursor()
+                            try:
+                                cursor = conn.cursor()
 
-                            if target == "todos":
-                                cursor.execute("UPDATE CP SET estado=%s;", ("ACTIVADO",))
-                                print("[CENTRAL] Enviada orden REANUDAR a todos los CPs")
-                            else:
-                                cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("ACTIVADO", target))
-                                print(f"[CENTRAL] Enviada orden REANUDAR a CP {target}")
+                                if target == "todos":
+                                    cursor.execute("UPDATE CP SET estado=%s;", ("ACTIVADO",))
+                                    print("[CENTRAL] Enviada orden REANUDAR a todos los CPs")
+                                else:
+                                    cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("ACTIVADO", target))
+                                    print(f"[CENTRAL] Enviada orden REANUDAR a CP {target}")
 
-                            conn.commit()
-                            producer.send(CP_CONTROL, {"accion": "REANUDAR", "idCP": target})
-                            producer.flush()                            
-                            actualizar_pantalla.set()
+                                conn.commit()
+                                producer.send(CP_CONTROL, {"accion": "REANUDAR", "idCP": target})
+                                producer.flush()
+                                actualizar_pantalla.set()
 
-                    # Otra orden
+                            except Exception as e:
+                                print(f"[CENTRAL][DB] Error al ejecutar REANUDAR: {e}")
+                                try:
+                                    conn.close()
+                                except:
+                                    pass
+                                time.sleep(2)
+                                print("[CENTRAL][DB] Reconectando a la base de datos...")
+                                conn = get_connection(db_host)
+                                print("[CENTRAL][DB] Reconexión exitosa.")
+
+                    # ---- Comando desconocido ----
                     else:
                         print(f"[CENTRAL] Comando no reconocido: {cmd}")
 
                     print("> ", end="", flush=True)
 
-                # Retroceso (borrar letra)
+                # ---- Retroceso ----
                 elif char == "\b":
                     if buffer:
                         buffer = buffer[:-1]
                         print("\b \b", end="", flush=True)
 
-                # Cualquier otro carácter
+                # ---- Cualquier otro carácter ----
                 else:
                     buffer += char
                     print(char, end="", flush=True)
@@ -178,18 +194,41 @@ def command_loop(producer, conn):
                 time.sleep(0.1)
 
     except Exception as e:
-        print(f"[CENTRAL] Excepción en command_loop: {e}")
+        print(f"[CENTRAL] Excepción general en command_loop: {e}")
+
+    finally:
+        if conn:
+            try:
+                conn.close()
+                print("[CENTRAL] Conexión de command_loop cerrada correctamente.")
+            except Exception:
+                pass
 
 
 # ---- Hilo que actualiza la pantalla cada vez que hay cambios ----
-def mostrar_CPs_loop(conn):
-    while not stop_event.is_set():
-        actualizar_pantalla.wait(timeout=1)
-        if stop_event.is_set():
-            break
-        if actualizar_pantalla.is_set():
-            actualizar_pantalla.clear()
-            mostrar_CPs(conn)
+def mostrar_CPs_loop(db_host):
+    conn = None
+
+    try:
+        conn = get_connection(db_host)
+
+        while not stop_event.is_set():
+            actualizar_pantalla.wait(timeout=1)
+            if stop_event.is_set():
+                break
+            if actualizar_pantalla.is_set():
+                actualizar_pantalla.clear()
+                mostrar_CPs(conn)
+
+    except Exception as e:
+        print(f"[CENTRAL][DB] Error al conectar con la BD en mostrar_CPs_loop: {e}")
+
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ---- Mostrar todos los CPs (con sus estados) ----
@@ -209,7 +248,6 @@ def reconectar_CPs(conn):
     print("\n[CENTRAL] En cualquier momento puedes ejecutar cualquiera de los siguientes comandos (escríbelo y pulsa ENTER):")
     print("  > parar <id_CP / todos>")
     print("  > reanudar <id_CP / todos>")
-    print("  > listar")
     print("  > salir\n")
 
 
@@ -235,7 +273,6 @@ def mostrar_CPs(conn):
     print("\n[CENTRAL] En cualquier momento puedes ejecutar cualquiera de los siguientes comandos (escríbelo y pulsa ENTER):")
     print("  > parar <id_CP / todos>")
     print("  > reanudar <id_CP / todos>")
-    print("  > listar")
     print("  > salir\n")
     print("> ", end="", flush=True)
 
@@ -359,7 +396,6 @@ def main():
     print("[CENTRAL] En cualquier momento puedes ejecutar cualquiera de los siguientes comandos (escríbelo y pulsa ENTER):")
     print("  > parar <id_CP / todos>")
     print("  > reanudar <id_CP / todos>")
-    print("  > listar")
     print("  > salir\n")
 
     reconectar_CPs(conn)
@@ -403,12 +439,12 @@ def main():
         threads.append(t)
 
     # Hilo para mostrar CPs
-    t_mostrar = threading.Thread(target=mostrar_CPs_loop, args=(conn,), daemon=False)
+    t_mostrar = threading.Thread(target=mostrar_CPs_loop, args=(db_host,), daemon=False)
     t_mostrar.start()
     threads.append(t_mostrar)
 
     # Hilo para leer comandos
-    t_cmd = threading.Thread(target=command_loop, args=(producer, conn), daemon=False)
+    t_cmd = threading.Thread(target=command_loop, args=(producer, db_host), daemon=False)
     t_cmd.start()
     threads.append(t_cmd)
 

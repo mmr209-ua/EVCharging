@@ -36,7 +36,8 @@ def get_connection(db_host):
         host=db_host,
         user="root",
         password="password",
-        database="EVCharging"
+        database="EVCharging",
+        autocommit=True
     )
 
     return conn
