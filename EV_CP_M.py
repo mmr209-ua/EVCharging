@@ -6,15 +6,14 @@ from kafka import KafkaProducer
 from EV_Topics import *
 
 def main():
-    if len(sys.argv) < 5:
-        print("Uso: py EV_CP_M.py <ip_engine:puerto_engine> <ip_central:puerto_central> <id_cp>")
+    if len(sys.argv) < 4:
+        print("Uso: py EV_CP_M.py <ip_engine:puerto_engine> <ip_central:puerto_central> <cp_id>")
         sys.exit(1)
 
     engine = sys.argv[1]
     ip_engine, puerto_engine = engine.split(":")
-    central = sys.argv[2]
+    broker = sys.argv[2]
     id_cp = sys.argv[3]
-    broker = sys.argv[4]
 
     producer = KafkaProducer(bootstrap_servers=[broker],
                              value_serializer=lambda v: json.dumps(v).encode("utf-8"))
@@ -29,7 +28,7 @@ def main():
 
     while True:
         try:
-            with socket.create_connection((ip_engine, 6000 + int(id_cp)), timeout=2) as sock:
+            with socket.socket((ip_engine, 6000 + int(id_cp)), timeout=2) as sock:
                 sock.send(b"PING")
                 respuesta = sock.recv(1024).decode()
 

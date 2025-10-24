@@ -82,7 +82,7 @@ def simular_fallos():
 def main():
     global id_cp
     if len(sys.argv) < 3:
-        print("Uso: python EV_CP_E.py <broker_ip:puerto> <id_cp>")
+        print("Uso: py EV_CP_E.py <broker_ip:puerto> <cp_id>")
         sys.exit(1)
 
     broker = sys.argv[1]
@@ -113,7 +113,7 @@ def main():
     threading.Thread(target=responder_salud, args=(server_socket,), daemon=True).start()
     threading.Thread(target=simular_fallos, daemon=True).start()
 
-    print("\n==========================================")
+    print("\n===========================================")
     print(f"       ENGINE CP {id_cp} INICIADO")
     print("============================================")
     print("[ENGINE] Comandos disponibles desde teclado:")
