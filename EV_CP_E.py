@@ -338,5 +338,5 @@ def main():
         menu_activo = False
         print(f"[ENGINE {cp_id}] Programa finalizado.")
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()

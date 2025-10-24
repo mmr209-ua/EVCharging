@@ -151,5 +151,5 @@ def main():
 
         time.sleep(5)  # Envío de estados a CENTRAL cada 5 segundos
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()

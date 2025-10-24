@@ -6,10 +6,12 @@ DB_NAME = "EVCharging"
 DB_USER = "root"
 DB_PASSWORD = "password"
 
-def get_connection(db_host):
-    """
+"""
     Devuelve una conexión a la BD usando el usuario Kafka.
-    """
+"""
+def get_connection(db_host):
+    
+    # Trata de conectar con la BD
     try:
         conn = mysql.connector.connect(
             host=db_host,
@@ -18,8 +20,10 @@ def get_connection(db_host):
             database=DB_NAME
         )
         return conn
+    
+    # Si la BD no existe, la creamos
     except mysql.connector.Error as err:
-        # Si la BD no existe, la creamos
+        
         if err.errno == errorcode.ER_BAD_DB_ERROR:
             conn = mysql.connector.connect(
                 host=db_host,
@@ -31,7 +35,7 @@ def get_connection(db_host):
             conn.commit()
             cursor.close()
             conn.close()
-            # Conectamos de nuevo a la BD recién creada
+            # Conectamos a la BD recién creada
             return mysql.connector.connect(
                 host=db_host,
                 user=DB_USER,
@@ -45,7 +49,6 @@ def get_connection(db_host):
 def init_db(conn):
     cursor = conn.cursor()
 
-    # CORRECCIÓN ERROR 5: Mejorar estructura de tablas
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS CP (
             idCP VARCHAR(20) PRIMARY KEY,
