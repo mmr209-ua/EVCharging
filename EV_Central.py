@@ -12,11 +12,20 @@ from colorama import init, Fore, Back, Style
 
 init(autoreset=True)
 
-# ==============================================================
+# ========================================================================================
 # Eventos y estado global
-# ==============================================================
+# ========================================================================================
 stop_event = threading.Event()                 # Para apagar ordenadamente todos los hilos
 actualizar_pantalla = threading.Event()        # Señal para refrescar el panel
+console_lock = threading.Lock()                # Para la sincronización de consola 
+current_input = ""                             # Buffer de entrada (lo que el usuario va tecleando -> compartido)
+
+# Reimprime el prompt con el buffer actual, sin romper lo que el usuario escribe.
+def print_prompt():
+    # Limpiar línea y escribir el prompt + buffer actual
+    sys.stdout.write("\r> " + current_input)
+    sys.stdout.write("\033[K")  # borra hasta el final de línea
+    sys.stdout.flush()
 
 # Colores según el estado de los CPs
 COLORS = {
@@ -42,17 +51,14 @@ def log_color(prefix, msg, color=Style.RESET_ALL):
     print(color + f"{prefix} {msg}" + Style.RESET_ALL)
 
 
-# ==============================================================
-# HILOS KAFKA (consumidores por topic)
-# ==============================================================
+# ====================================================================================
+# HILO GÉNERICO CON KAFKA (consume de un topic y despacha a la lógica correspondiente)
+# ====================================================================================
 
 def consume_loop(topic, producer, consumer, db_host):
-    """Hilo genérico: consume de un topic y despacha a la lógica correspondiente.
-    Cada hilo mantiene su propia conexión a BD para evitar contención.
-    """
     conn = None
     try:
-        conn = get_connection(db_host)
+        conn = get_connection(db_host) # Cada hilo mantiene su propia conexión a BD para evitar contención.
         while not stop_event.is_set():
             records = consumer.poll(timeout_ms=1000)
             if not records:
@@ -61,7 +67,6 @@ def consume_loop(topic, producer, consumer, db_host):
                 for msg in msgs:
                     event = msg.value
                     print(f"[CENTRAL][Kafka] Mensaje en {topic}: {event}")
-
                     try:
                         if topic == CP_REGISTER:
                             registrar_CP(event, conn)
@@ -91,30 +96,37 @@ def consume_loop(topic, producer, consumer, db_host):
             pass
 
 
-# ==============================================================
-# HILO INTERACTIVO DE COMANDOS (teclado no bloqueante)
-# ==============================================================
+# ===============================================================
+# HILO INTERACTIVO DE COMANDOS (teclado no bloqueante con msvcrt)
+# ===============================================================
 
 def command_loop(producer, db_host):
+    global current_input
     buffer = ""
     conn = None
     try:
         conn = get_connection(db_host)
+        with console_lock:
+            print("> ", end="", flush=True)
         while not stop_event.is_set():
             if msvcrt.kbhit():
                 char = msvcrt.getwch()
 
                 if char == "\r":  # ENTER
-                    print()
+                    with console_lock:
+                        print()  # bajar de línea
                     cmd = buffer.strip().lower()
                     buffer = ""
+                    current_input = ""
 
                     if not cmd:
-                        print("> ", end="", flush=True)
+                        with console_lock:
+                            print_prompt()
                         continue
 
                     if cmd == "salir":
-                        print("\n[CENTRAL] Cerrando CENTRAL...")
+                        with console_lock:
+                            print("\n[CENTRAL] Cerrando CENTRAL...")
                         stop_event.set()
                         break
 
@@ -126,24 +138,29 @@ def command_loop(producer, db_host):
                                 cursor = conn.cursor()
                                 if target == "todos":
                                     cursor.execute("UPDATE CP SET estado=%s;", ("PARADO",))
-                                    print("[CENTRAL] Enviada orden PARAR a todos los CPs")
+                                    with console_lock:
+                                        print("[CENTRAL] Enviada orden PARAR a todos los CPs")
                                 else:
                                     cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("PARADO", target))
-                                    print(f"[CENTRAL] Enviada orden PARAR a CP {target}")
+                                    with console_lock:
+                                        print(f"[CENTRAL] Enviada orden PARAR a CP {target}")
                                 conn.commit()
                                 producer.send(CP_CONTROL, {"accion": "PARAR", "idCP": target})
                                 producer.flush()
                                 actualizar_pantalla.set()
                             except Exception as e:
-                                print(f"[CENTRAL][DB] Error al ejecutar PARAR: {e}")
+                                with console_lock:
+                                    print(f"[CENTRAL][DB] Error al ejecutar PARAR: {e}")
                                 try:
                                     conn.close()
                                 except Exception:
                                     pass
                                 time.sleep(1)
-                                print("[CENTRAL][DB] Reconectando a la base de datos...")
+                                with console_lock:
+                                    print("[CENTRAL][DB] Reconectando a la base de datos...")
                                 conn = get_connection(db_host)
-                                print("[CENTRAL][DB] Reconexión exitosa.")
+                                with console_lock:
+                                    print("[CENTRAL][DB] Reconexión exitosa.")
 
                     elif cmd.startswith("reanudar"):
                         parts = cmd.split()
@@ -153,41 +170,53 @@ def command_loop(producer, db_host):
                                 cursor = conn.cursor()
                                 if target == "todos":
                                     cursor.execute("UPDATE CP SET estado=%s;", ("ACTIVADO",))
-                                    print("[CENTRAL] Enviada orden REANUDAR a todos los CPs")
+                                    with console_lock:
+                                        print("[CENTRAL] Enviada orden REANUDAR a todos los CPs")
                                 else:
                                     cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("ACTIVADO", target))
-                                    print(f"[CENTRAL] Enviada orden REANUDAR a CP {target}")
+                                    with console_lock:
+                                        print(f"[CENTRAL] Enviada orden REANUDAR a CP {target}")
                                 conn.commit()
                                 producer.send(CP_CONTROL, {"accion": "REANUDAR", "idCP": target})
                                 producer.flush()
                                 actualizar_pantalla.set()
                             except Exception as e:
-                                print(f"[CENTRAL][DB] Error al ejecutar REANUDAR: {e}")
+                                with console_lock:
+                                    print(f"[CENTRAL][DB] Error al ejecutar REANUDAR: {e}")
                                 try:
                                     conn.close()
                                 except Exception:
                                     pass
                                 time.sleep(1)
-                                print("[CENTRAL][DB] Reconectando a la base de datos...")
+                                with console_lock:
+                                    print("[CENTRAL][DB] Reconectando a la base de datos...")
                                 conn = get_connection(db_host)
-                                print("[CENTRAL][DB] Reconexión exitosa.")
+                                with console_lock:
+                                    print("[CENTRAL][DB] Reconexión exitosa.")
 
                     else:
-                        print(f"[CENTRAL] Comando no reconocido: {cmd}")
+                        with console_lock:
+                            print(f"[CENTRAL] Comando no reconocido: {cmd}")
 
-                    print("> ", end="", flush=True)
+                    with console_lock:
+                        print_prompt()
 
                 elif char == "\b":  # BACKSPACE
                     if buffer:
                         buffer = buffer[:-1]
-                        print("\b \b", end="", flush=True)
+                        current_input = buffer
+                        with console_lock:
+                            print_prompt()
                 else:
                     buffer += char
-                    print(char, end="", flush=True)
+                    current_input = buffer
+                    with console_lock:
+                        print_prompt()
             else:
-                time.sleep(0.1)
+                time.sleep(0.05)
     except Exception as e:
-        print(f"[CENTRAL] Excepción general en command_loop: {e}")
+        with console_lock:
+            print(f"[CENTRAL] Excepción general en command_loop: {e}")
     finally:
         if conn:
             try:
@@ -197,11 +226,11 @@ def command_loop(producer, db_host):
 
 
 # ==============================================================
-# PANEL DE ESTADO (impresión con color)
+# PANEL DE MONITORIZACIÓN DE CPs
 # ==============================================================
 
+# Se invoca al arrancar la Central para mostrar todos los CPs como DESCONECTADO hasta que estos se conecten
 def reconectar_CPs(conn):
-    """Se invoca al arrancar para mostrar todos como DESCONECTADO hasta que reporten."""
     limpiar_pantalla()
     cursor = conn.cursor()
     cursor.execute("SELECT idCP, precio, ubicacion FROM CP;")
@@ -219,28 +248,42 @@ def reconectar_CPs(conn):
     print("  > salir\n")
 
 
+# Redibuja el panel de CPs
 def mostrar_CPs(conn):
-    limpiar_pantalla()
     cursor = conn.cursor()
     cursor.execute("SELECT idCP, estado, precio, ubicacion FROM CP;")
     cps = cursor.fetchall()
 
-    print("[CENTRAL] Monitorización de CPs:")
-    print("--------------------------------")
+    panel_lines = []
+    panel_lines.append("[CENTRAL] Monitorización de CPs:")
+    panel_lines.append("--------------------------------")
     for idCP, estado, precio, ubicacion in cps:
         color = COLORS.get(estado, "")
-        print(color + f"  - CP {idCP} : en {ubicacion} (precio {precio} €/kWh) -> Estado: {estado}")
+        panel_lines.append(color + f"  - CP {idCP} : en {ubicacion} (precio {precio} €/kWh) -> Estado: {estado}" + Style.RESET_ALL)
         if estado == "SUMINISTRANDO" and idCP in CP_CONSUMPTION_DATA:
             data = CP_CONSUMPTION_DATA[idCP]
-            print(f"  Consumo: {data['kwh']:.2f} kWh | Importe: {data['importe']:.2f} € | Conductor: {data['conductor']}")
+            panel_lines.append(f"  Consumo: {data['kwh']:.2f} kWh | Importe: {data['importe']:.2f} € | Conductor: {data['conductor']}")
 
-    print("\n[CENTRAL] Comandos (ENTER para ejecutar):")
-    print("  > parar <id_CP / todos>")
-    print("  > reanudar <id_CP / todos>")
-    print("  > salir\n")
-    print("> ", end="", flush=True)
+    panel_lines.append("")  # línea en blanco
+    panel_lines.append("[CENTRAL] Comandos (ENTER para ejecutar):")
+    panel_lines.append("  > parar <id_CP / todos>")
+    panel_lines.append("  > reanudar <id_CP / todos>")
+    panel_lines.append("  > salir")
+    panel_lines.append("")  # línea en blanco
+
+    # Todo esto es para evitar que se borre lo que se escriba por terminal y que así se puedan procesar correctamente los comandos
+    with console_lock:
+        # Mover cursor al inicio y limpiar pantalla (solo el contenido, repondremos el prompt después)
+
+        sys.stdout.write("\033[2J\033[H")  # Borra toda la pantalla y mueve el cursor arriba sin causar flicker
+        sys.stdout.flush()
+
+        sys.stdout.write("\n".join(panel_lines) + "\n")
+        # Reimprimir el prompt con lo que el usuario llevaba tecleado
+        print_prompt()
 
 
+# Hilo que contiene el bucle para mostrar CPs actualizando pantalla de mientras y demás
 def mostrar_CPs_loop(db_host):
     conn = None
     try:
@@ -288,6 +331,15 @@ def cambiar_estado_CP(event, conn):
     id_cp = event["idCP"]
     estado = event["estado"]
     cursor = conn.cursor()
+
+    # Comprobar el estado actual antes de actualizar
+    cursor.execute("SELECT estado FROM CP WHERE idCP=%s;", (id_cp,))
+    row = cursor.fetchone()
+
+    # No hacer nada si ya está en el mismo estado
+    if row and row[0] == estado:
+        return
+
     if id_cp == "todos":
         cursor.execute("UPDATE CP SET estado=%s;", (estado,))
         conn.commit()
@@ -296,6 +348,7 @@ def cambiar_estado_CP(event, conn):
         cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", (estado, id_cp))
         conn.commit()
         print(f"[CENTRAL] Estado actualizado CP {id_cp} a: {estado}")
+
     actualizar_pantalla.set()
 
 
@@ -304,16 +357,28 @@ def comprobar_salud_CP(event, conn):
     salud = event["salud"]
     cursor = conn.cursor()
 
+    # Obtener el estado actual
+    cursor.execute("SELECT estado FROM CP WHERE idCP=%s;", (id_cp,))
+    row = cursor.fetchone()
+    if row:
+        estado_actual = row[0]
+    else:
+        estado_actual = None
+
     if salud == "KO":
         nuevo_estado = "AVERIADO"
-        print(f"[CENTRAL] CP {id_cp} se ha averiado")
+        if estado_actual != "AVERIADO":
+            print(f"[CENTRAL] CP {id_cp} se ha averiado")
+            cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", (nuevo_estado, id_cp))
+            conn.commit()
+            actualizar_pantalla.set()
     else:
         nuevo_estado = "ACTIVADO"
-        print(f"[CENTRAL] CP {id_cp} se ha recuperado")
-
-    cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", (nuevo_estado, id_cp))
-    conn.commit()
-    actualizar_pantalla.set()
+        if estado_actual != "ACTIVADO":
+            print(f"[CENTRAL] CP {id_cp} se ha recuperado")
+            cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", (nuevo_estado, id_cp))
+            conn.commit()
+            actualizar_pantalla.set()
 
 
 def procesar_peticion_suministro(event, conn, producer):
@@ -338,6 +403,7 @@ def procesar_peticion_suministro(event, conn, producer):
 
     estado = row[0]
     if estado == "ACTIVADO":
+
         # 1) Autoriza al CP
         try:
             payload_cp = {"idCP": id_cp, "action": "authorize"}
@@ -369,6 +435,7 @@ def procesar_peticion_suministro(event, conn, producer):
                 print(f"[CENTRAL] Error notificando al driver: {e}")
     else:
         print(f"[CENTRAL] CP {id_cp} no disponible (estado actual: {estado}).")
+        
         # Si conocemos al driver, notificamos rechazo inmediato
         if id_driver is not None:
             try:
@@ -420,13 +487,14 @@ def enviar_ticket(event, conn, producer):
 # ==============================================================
 
 def handle_tcp_client(conn_sock, addr, db_host, producer):
-    """Atiende a un monitor EV_CP_M. Lee líneas JSON separadas por '\n'.
-    Cada línea se procesa individualmente para tolerar múltiples mensajes por conexión.
-    """
+    """Atiende a un monitor EV_CP_M. Lee líneas JSON separadas por '\n'."""
     db_conn = None
+    id_cp_asociado = None  # recordaremos qué CP estaba en esta conexión
+
     try:
         db_conn = get_connection(db_host)
-        conn_file = conn_sock.makefile('r')  # stream de texto para leer por líneas
+        conn_file = conn_sock.makefile('r')
+
         while not stop_event.is_set():
             line = conn_file.readline()
             if not line:
@@ -434,6 +502,7 @@ def handle_tcp_client(conn_sock, addr, db_host, producer):
             line = line.strip()
             if not line:
                 continue
+
             try:
                 msg = json.loads(line)
             except json.JSONDecodeError:
@@ -441,14 +510,14 @@ def handle_tcp_client(conn_sock, addr, db_host, producer):
                 continue
 
             msg_type = msg.get("type")
+            id_cp_asociado = msg.get("idCP", id_cp_asociado)  # guarda último CP conocido
+
             try:
                 if msg_type == "register":
                     registrar_CP(msg, db_conn)
                 elif msg_type == "status":
-                    # Espera {"type":"status","idCP":"X","estado":"ACTIVADO"|...}
                     cambiar_estado_CP({"idCP": msg.get("idCP"), "estado": msg.get("estado")}, db_conn)
                 elif msg_type == "health":
-                    # Espera {"type":"health","idCP":"X","salud":"OK"|"KO"|"RECUPERADO"}
                     salud = msg.get("salud")
                     if salud == "RECUPERADO":
                         salud = "OK"
@@ -459,9 +528,22 @@ def handle_tcp_client(conn_sock, addr, db_host, producer):
                     print(f"[CENTRAL][TCP] Tipo desconocido desde {addr}: {msg_type}")
             except Exception as e:
                 print(f"[CENTRAL][TCP] Error tramitando mensaje de {addr}: {e}")
+
     except Exception as e:
         print(f"[CENTRAL][TCP] Error en cliente {addr}: {e}")
+
     finally:
+        # Aquí manejamos la desconexión del monitor
+        if id_cp_asociado:
+            try:
+                cursor = db_conn.cursor()
+                cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("DESCONECTADO", id_cp_asociado))
+                db_conn.commit()
+                print(f"[CENTRAL][TCP] Monitor {addr} desconectado -> CP {id_cp_asociado} marcado como DESCONECTADO")
+                actualizar_pantalla.set()
+            except Exception as e:
+                print(f"[CENTRAL][TCP] Error al marcar CP {id_cp_asociado} como DESCONECTADO: {e}")
+
         try:
             conn_sock.close()
         except Exception:
@@ -516,7 +598,7 @@ def main():
     broker = sys.argv[2]
     db_host = sys.argv[3]
 
-    # Conexión inicial a BD e inicialización de esquema
+    # Conexión inicial a BD
     conn = get_connection(db_host)
     init_db(conn)
 
@@ -527,7 +609,7 @@ def main():
     print("  > reanudar <id_CP / todos>")
     print("  > salir\n")
 
-    # Mostrar todos como DESCONECTADOS hasta que reporten
+    # Mostrar todos los CPs como DESCONECTADOS hasta que reporten
     reconectar_CPs(conn)
 
     # Producer Kafka
@@ -578,7 +660,7 @@ def main():
             enable_auto_commit=True,
             auto_offset_reset='earliest',
         ),
-        # Importante: EV_Driver y EV_CP_E envían CHARGING_REQUESTS
+        # REVISAR
         CHARGING_REQUESTS: KafkaConsumer(
             CHARGING_REQUESTS,
             bootstrap_servers=[broker],
@@ -587,7 +669,7 @@ def main():
             enable_auto_commit=True,
             auto_offset_reset='earliest',
         ),
-        # Mantengo el topic SUPPLY_REQUEST_TO_CENTRAL por compatibilidad
+        # REVISAR
         SUPPLY_REQUEST_TO_CENTRAL: KafkaConsumer(
             SUPPLY_REQUEST_TO_CENTRAL,
             bootstrap_servers=[broker],

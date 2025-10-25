@@ -10,7 +10,7 @@ from EV_Topics import *
 
 def main():
     if len(sys.argv) < 4:
-        print("Uso: python EV_CP_E.py <broker_ip:puerto> <cp_id> <listen_port>")
+        print("Uso: py EV_CP_E.py <broker_ip:puerto> <cp_id> <listen_port>")
         sys.exit(1)
 
     broker = sys.argv[1]

@@ -6,18 +6,23 @@ import socket
 import threading
 
 def main():
-    if len(sys.argv) < 4:
-        print("Uso: py EV_CP_M.py <central_ip:central_port> <cp_id> <engine_ip:engine_port> ")
+    if len(sys.argv) != 4:
+        print("Uso: py EV_CP_M.py <central_ip:central_port> <cp_id> <engine_ip:engine_port>")
         sys.exit(1)
 
     central = sys.argv[1]
+    cp_id = sys.argv[2]
+    engine = sys.argv[3]
+
+    # Separar IP y puerto de la central
     central_ip, central_port = central.split(":")
     central_port = int(central_port)
-    engine = sys.argv[3]
+
+    # Separar IP y puerto del engine
     engine_ip, engine_port = engine.split(":")
     engine_port = int(engine_port)
-    cp_id = str(sys.argv[2])
-    
+
+
     # ==========================================================
     # Conexión persistente con CENTRAL por TCP con manejo elegante de errores
     # ==========================================================

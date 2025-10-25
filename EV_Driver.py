@@ -42,8 +42,8 @@ def main():
         with open("solicitudes.txt", "r") as f:
             cp_list = [line.strip() for line in f if line.strip()]
     except FileNotFoundError:
-        print("[DRIVER] No se encontró solicitudes.txt — usando CP=1 por defecto.")
-        cp_list = ["1"]
+        print("[DRIVER] No se encontró solicitudes.txt.")
+        cp_list = []
 
     for cp_id in cp_list:
         print(f"\n[DRIVER {driver_id}] 🚗 Solicitando carga en CP {cp_id}...")
@@ -120,7 +120,7 @@ def main():
         print(f"[DRIVER {driver_id}] Esperando 4 segundos antes de la siguiente solicitud...")
         time.sleep(4)
 
-    print(f"[DRIVER {driver_id}] 🏁 Todas las recargas completadas")
+    print(f"[DRIVER {driver_id}] Solicitar suministro a un CP. Escriba el ID del CP al que quiere solicitar suministro:")
 
 if __name__ == "__main__":
     main()
