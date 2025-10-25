@@ -1,60 +1,36 @@
 @echo off
 cd /d %~dp0
-title EVCharging
-color 0A
-echo ==========================================
-echo                 EVCharging 
-echo ==========================================
-echo.
+REM === Demo de despliegue local (ajusta rutas, bootstrap y DB host) ===
+set PYTHON=py
+set BOOTSTRAP=localhost:9092
+set CENTRAL_PORT=7000
+set DBHOST=localhost
 
-REM ==== CONFIGURACION GENERAL ====
-set BROKER=127.0.0.1:9092
-set CENTRAL_PORT=9098
-set DB_HOST=127.0.0.1
+REM Crear topics base (opcional si el cluster los crea automáticamente)
+%PYTHON% -c "import EV_Topics as T; T.ensure_topics(r'%BOOTSTRAP%')"
 
-REM ==== CONFIGURACION DE CPs ====
-set CP1_ID=1
-set CP1_ENGINE_PORT=7001
+REM Iniciar CENTRAL en nueva ventana
+start "EV_Central" %PYTHON% EV_Central.py --port %CENTRAL_PORT% --bootstrap %BOOTSTRAP% --dbhost %DBHOST%
+timeout /t 3 >nul
 
-REM ==== CONFIGURACION DE DRIVERS ====
-set DRIVER1_ID=101
+REM Iniciar CP #1 Engine y Monitor
+start "EV_CP_E CP01" %PYTHON% EV_CP_E.py --cp_id CP01 --price 0.35 --bootstrap %BOOTSTRAP% --port 7101
+timeout /t 3 >nul
+start "EV_CP_M CP01" %PYTHON% EV_CP_M.py --central_host localhost --central_port %CENTRAL_PORT% --engine_host localhost --engine_port 7101 --cp_id CP01 --price 0.35 --location "Centro"
+timeout /t 3 >nul
 
-REM ==== ARRANQUE DE KAFKA ====
-echo Iniciando Kafka...
-timeout /t 2 >nul
+REM Iniciar CP #2 Engine y Monitor
+start "EV_CP_E CP02" %PYTHON% EV_CP_E.py --cp_id CP02 --price 0.40 --bootstrap %BOOTSTRAP% --port 7102
+timeout /t 3 >nul
+start "EV_CP_M CP02" %PYTHON% EV_CP_M.py --central_host localhost --central_port %CENTRAL_PORT% --engine_host localhost --engine_port 7102 --cp_id CP02 --price 0.40 --location "Puerto"
+timeout /t 3 >nul
 
-REM ==== ARRANQUE CENTRAL ====
-echo.
-echo [CENTRAL] Iniciando en puerto %CENTRAL_PORT% ...
-start cmd /k "title CENTRAL && py EV_Central.py %CENTRAL_PORT% %BROKER% %DB_HOST%"
-timeout /t 2 >nul
-
-REM ==== ARRANQUE CP ENGINE ====
-echo.
-echo [ENGINE %CP1_ID%] Iniciando en puerto %CP1_ENGINE_PORT% ...
-start cmd /k "title CP_ENGINE_%CP1_ID% && py EV_CP_E.py %BROKER% %CP1_ID% %CP1_ENGINE_PORT%"
-timeout /t 2 >nul
-
-REM ==== ARRANQUE CP MONITOR ====
-echo.
-echo [MONITOR %CP1_ID%] Conectando a CENTRAL y ENGINE...
-start cmd /k "title CP_MONITOR_%CP1_ID% && py EV_CP_M.py 127.0.0.1:%CENTRAL_PORT% %CP1_ID% 127.0.0.1:%CP1_ENGINE_PORT%"
-timeout /t 2 >nul
-
-REM ==== ARRANQUE DRIVER ====
-echo.
-echo [DRIVER %DRIVER1_ID%] Iniciando...
-start cmd /k "title DRIVER_%DRIVER1_ID% && py EV_Driver.py %BROKER% %DRIVER1_ID%"
+REM Iniciar Driver #101 solicitando en CP01 y CP02 (en ese orden)
+echo CP01>services.txt
+echo CP02>>services.txt
+start "EV_Driver 101" %PYTHON% EV_Driver.py --bootstrap %BOOTSTRAP% --driver_id 101 --services_file services.txt
 
 echo.
-echo ==========================================
-echo Iniciando sistema...
-echo - CENTRAL escuchando en %CENTRAL_PORT%
-echo - Kafka broker en %BROKER%
-echo - CP %CP1_ID% (engine y monitor)
-echo - DRIVER %DRIVER1_ID%
-echo ==========================================
+echo Demo lanzada. Recuerda tener Kafka corriendo y la BBDD MySQL (EVCharging) creada.
+echo En las ventanas de CP_E pulsa 'p' para simular enchufado, 'k' para simular KO.
 echo.
-
-pause
-exit
