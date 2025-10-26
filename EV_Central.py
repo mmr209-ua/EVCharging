@@ -713,6 +713,7 @@ def main():
         stop_event.set()
         print("[CENTRAL] Cerrando conexiones y esperando hilos...")
 
+<<<<<<< HEAD
         for t in threads:
             t.join(timeout=2)
 
@@ -732,3 +733,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+=======
+if __name__ == "__main__":
+    main()
+>>>>>>> 750b8ecedbef297a6e777f902276ec771d4f096a
