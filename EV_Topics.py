@@ -1,22 +1,25 @@
-#EV_Topics
 # Topics de comunicación CP -> Central
-CP_REGISTER = "cp_register"         # Registro de nuevos CPs
-CP_STATUS = "cp_status"             # Estados de los CPs (activo, suministrando, etc.)
-CP_ALERTS = "cp_alerts"             # Alertas/averías/consumo
-CP_HEALTH = "cp_health"             # Monitorización de salud
-CP_CONSUMPTION = "cp_consumption"   # Consumo en tiempo real
-CP_SUPPLY_COMPLETE = "cp_supply_complete"	# Fin de suministro y ticket
+CP_REGISTER = "CP_REGISTER"                         # Registro de nuevos CPs
+CP_HEALTH = "CP_HEALTH"                             # Monitorización de salud para detectar averías
+CP_STATUS = "CP_STATUS"                             # Estados de los CPs (activo, suministrando, etc.)
+CP_CONSUMPTION = "CP_CONSUMPTION"                   # Información acerca del CP suminstrando en tiempo real (consumo, importe, id conductor)
+CP_SUPPLY_COMPLETE = "CP_SUPPLY_COMPLETE"           # Fin de suministro y ticket
 
 # Topics de comunicación Central -> CP
-CP_CONTROL = "cp_control"	                # Parar/Reanudar CP
-CP_AUTHORIZE_SUPPLY = "cp_authorize_supply"	# Autorización de suministro
+CP_CONTROL = "CP_CONTROL"                           # Parar/Reanudar CP
 
-# Topics de comunicación Driver -> Central
-CHARGING_REQUESTS = "charging_requests" # Peticiones de recarga
+# Topics de comunicación Central -> CP y Driver
+CP_AUTHORIZE_SUPPLY = "CP_AUTHORIZE_SUPPLY"	        # Autorización de suministro
 
 # Topics de comunicación Central -> Driver
-SUPPLY_STATUS = "supply_status"	                    # Estado del suministro
-DRIVER_SUPPLY_COMPLETE = "driver_supply_complete"	# Fin de suministro y ticket
+SUPPLY_STATUS = "SUPPLY_STATUS"	                    # Estado del suministro
+DRIVER_SUPPLY_COMPLETE = "DRIVER_SUPPLY_COMPLETE"   # Fin de suministro y ticket
 
-# Más topics 
-FILE_REQUESTS = "file_requests" # Peticiones desde archivo (Sistema → CENTRAL)
+# Topics de comunicación Driver -> Central
+SUPPLY_REQUEST_TO_CENTRAL = "SUPPLY_REQUEST_TO_CENTRAL" 
+
+# Topics de comunicación Driver -> CP
+SUPPLY_REQUEST_VIA_CP = "SUPPLY_REQUEST_VIA_CP" 
+
+
+CHARGING_REQUESTS = "CHARGING_REQUESTS"

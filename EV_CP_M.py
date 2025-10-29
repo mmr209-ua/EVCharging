@@ -1,4 +1,4 @@
-# EV_CP_M
+# EV_CP_M.py - VERSIÓN COMPLETA
 import sys
 import json
 import time
@@ -17,9 +17,13 @@ def main():
     central_port = int(sys.argv[5])
 
     # ==========================================================
-    # Conexión persistente con CENTRAL por TCP con manejo elegante de errores
+    # Conexión persistente con CENTRAL por TCP
     # ==========================================================
     def connect_to_central():
+        """
+        Intenta conectar con CENTRAL de forma persistente.
+        Reintenta cada 3 segundos hasta conseguirlo.
+        """
         while True:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -36,6 +40,10 @@ def main():
             time.sleep(3)
 
     def send_to_central(msg):
+        """
+        Envía un mensaje JSON a CENTRAL por el socket TCP.
+        Si falla, reconecta automáticamente.
+        """
         nonlocal central_socket
         max_retries = 3
         for attempt in range(max_retries):
@@ -57,7 +65,7 @@ def main():
     central_socket = connect_to_central()
 
     # ==========================================================
-    # Registro inicial del CP
+    # Registro inicial del CP en CENTRAL
     # ==========================================================
     register_msg = {
         "type": "register",
@@ -71,11 +79,52 @@ def main():
         print(f"[CP_MONITOR {cp_id}] ❌ Falló el registro en CENTRAL")
 
     # ==========================================================
-    # CORRECCIÓN ERROR 1: Hilo separado para mostrar estado cada segundo
+    # Hilo separado para mostrar estado cada segundo (visual)
     # ==========================================================
     def mostrar_estado_continuo():
+        """
+        Hilo que muestra en pantalla el estado del Engine cada segundo.
+        Solo muestra cambios de estado para no saturar la consola.
+        """
         ultimo_estado = None
+        try:
+            while True:
+                ok = False
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(1)
+                    s.connect((engine_ip, engine_port))
+                    s.sendall(b"PING")
+                    data = s.recv(1024).decode().strip()
+                    s.close()
+                    if data == "PONG":
+                        ok = True
+                except:
+                    ok = False
+
+                estado_actual = "🟢 ENGINE CONECTADO" if ok else "🔴 ENGINE AVERIADO"
+                if estado_actual != ultimo_estado:
+                    print(f"[CP_MONITOR {cp_id}] {estado_actual}")
+                    ultimo_estado = estado_actual
+                
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        except Exception as e:
+            print(f"[CP_MONITOR {cp_id}] ❌ Error en hilo de estado: {e}")
+
+    # Iniciar hilo para mostrar estado continuo
+    threading.Thread(target=mostrar_estado_continuo, daemon=True).start()
+
+    # ==========================================================
+    # Bucle principal: health check y notificación a CENTRAL (cada 5 segundos)
+    # ==========================================================
+    fallo_prev = False
+    engine_conectado_prev = False
+
+    try:
         while True:
+            # Health check del Engine
             ok = False
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -89,67 +138,55 @@ def main():
             except:
                 ok = False
 
-            estado_actual = "🟢 ENGINE CONECTADO" if ok else "🔴 ENGINE AVERIADO"
-            if estado_actual != ultimo_estado:
-                print(f"[CP_MONITOR {cp_id}] {estado_actual}")
-                ultimo_estado = estado_actual
+            # --- Si no responde el Engine (AVERÍA) ---
+            if not ok:
+                if not fallo_prev:
+                    # Primera vez que falla: enviar alerta
+                    alert_msg = {"type": "alert", "idCP": cp_id, "alerta": "ENGINE_NO_RESPONDE"}
+                    if send_to_central(alert_msg):
+                        print(f"[CP_MONITOR {cp_id}] ❌ ENGINE no responde, alerta enviada a CENTRAL")
+                    fallo_prev = True
+                
+                # Enviar estado AVERIADO
+                status_msg = {"type": "status", "idCP": cp_id, "estado": "AVERIADO"}
+                send_to_central(status_msg)
+                
+                if engine_conectado_prev:
+                    engine_conectado_prev = False
+
+            # --- Si el Engine responde correctamente (OK) ---
+            else:
+                if fallo_prev:
+                    # Se recuperó de una avería
+                    health_msg = {"type": "health", "idCP": cp_id, "salud": "RECUPERADO"}
+                    if send_to_central(health_msg):
+                        print(f"[CP_MONITOR {cp_id}] ✅ ENGINE recuperado, notificado a CENTRAL")
+                    fallo_prev = False
+
+                # Enviar estado ACTIVADO y salud OK
+                status_msg = {"type": "status", "idCP": cp_id, "estado": "ACTIVADO"}
+                health_msg = {"type": "health", "idCP": cp_id, "salud": "OK"}
+                send_to_central(status_msg)
+                send_to_central(health_msg)
+                
+                if not engine_conectado_prev:
+                    engine_conectado_prev = True
+
+            # Esperar 5 segundos antes del siguiente envío a CENTRAL
+            time.sleep(5)
             
-            time.sleep(1)
-
-    # Iniciar hilo para mostrar estado continuo
-    threading.Thread(target=mostrar_estado_continuo, daemon=True).start()
-
-    # ==========================================================
-    # Bucle principal para enviar estados a CENTRAL
-    # ==========================================================
-    fallo_prev = False
-    engine_conectado_prev = False
-
-    while True:
-        ok = False
+    except KeyboardInterrupt:
+        print(f"\n[CP_MONITOR {cp_id}] 🛑 Monitor cerrado por el usuario")
+    except Exception as e:
+        print(f"[CP_MONITOR {cp_id}] ❌ Error: {e}")
+    finally:
+        # Cerrar socket de Central
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(1)
-            s.connect((engine_ip, engine_port))
-            s.sendall(b"PING")
-            data = s.recv(1024).decode().strip()
-            s.close()
-            if data == "PONG":
-                ok = True
+            central_socket.close()
+            print(f"[CP_MONITOR {cp_id}] ✅ Socket de Central cerrado")
         except:
-            ok = False
-
-        # --- Si no responde el Engine ---
-        if not ok:
-            if not fallo_prev:
-                alert_msg = {"type": "alert", "idCP": cp_id, "alerta": "ENGINE_NO_RESPONDE"}
-                if send_to_central(alert_msg):
-                    print(f"[CP_MONITOR {cp_id}] ❌ ENGINE no responde, alerta enviada a CENTRAL")
-                fallo_prev = True
-            
-            status_msg = {"type": "status", "idCP": cp_id, "estado": "AVERIADO"}
-            send_to_central(status_msg)
-            
-            if engine_conectado_prev:
-                engine_conectado_prev = False
-
-        # --- Si el Engine responde correctamente ---
-        else:
-            if fallo_prev:
-                health_msg = {"type": "health", "idCP": cp_id, "salud": "RECUPERADO"}
-                if send_to_central(health_msg):
-                    print(f"[CP_MONITOR {cp_id}] ✅ ENGINE recuperado, notificado a CENTRAL")
-                fallo_prev = False
-
-            status_msg = {"type": "status", "idCP": cp_id, "estado": "ACTIVADO"}
-            health_msg = {"type": "health", "idCP": cp_id, "salud": "OK"}
-            send_to_central(status_msg)
-            send_to_central(health_msg)
-            
-            if not engine_conectado_prev:
-                engine_conectado_prev = True
-
-        time.sleep(5)  # Envío de estados a CENTRAL cada 5 segundos
+            pass
+        print(f"[CP_MONITOR {cp_id}] ✅ Monitor finalizado correctamente")
 
 if _name_ == "_main_":
     main()
