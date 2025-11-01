@@ -38,7 +38,7 @@ timeout /t 2 >nul
 REM ==== ARRANQUE CP MONITOR ====
 echo.
 echo [MONITOR %CP1_ID%] Conectando a CENTRAL y ENGINE...
-start cmd /k "title CP_MONITOR_%CP1_ID% && py EV_CP_M.py 127.0.0.1:%CENTRAL_PORT% %CP1_ID% 127.0.0.1:%CP1_ENGINE_PORT%"
+start cmd /k "title CP_MONITOR_%CP1_ID% && py EV_CP_M.py %CP1_ID% 127.0.0.1 %CP1_ENGINE_PORT% 127.0.0.1 %CENTRAL_PORT% "
 timeout /t 2 >nul
 
 REM ==== ARRANQUE DRIVER ====
