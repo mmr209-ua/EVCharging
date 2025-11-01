@@ -4,459 +4,144 @@ import threading
 import json
 import time
 import socket
-import msvcrt
+import sqlite3
 from kafka import KafkaConsumer, KafkaProducer
-from EV_DB import *
-from EV_Topics import *
-from colorama import init, Fore, Back, Style
+from EV_DB import *                 
+from EV_Topics import *             
+import tkinter as tk
+from tkinter import ttk
 
-init(autoreset=True)
+# ======================================================================
+# Eventos y estado global del programa
+# ======================================================================
+BBDD = "Base_Datos.sqlite"
+REFRESH_MS = 1500
+stop_event = threading.Event()          # para apagar ordenadamente
+actualizar_pantalla = threading.Event() # para refrescar GUI
+gui_instance = None                     # referencia global a la interfaz gráfica de usuario
+CP_CONSUMPTION_DATA = {}                # datos del CP acerca del consumo en un suministro en tiempo real
 
-# ========================================================================================
-# Eventos y estado global
-# ========================================================================================
-stop_event = threading.Event()                 # Para apagar ordenadamente todos los hilos
-actualizar_pantalla = threading.Event()        # Señal para refrescar el panel
-console_lock = threading.Lock()                # Para la sincronización de consola 
-current_input = ""                             # Buffer de entrada (lo que el usuario va tecleando -> compartido)
-
-# Reimprime el prompt con el buffer actual, sin romper lo que el usuario escribe.
-def print_prompt():
-    # Limpiar línea y escribir el prompt + buffer actual
-    sys.stdout.write("\r> " + current_input)
-    sys.stdout.write("\033[K")  # borra hasta el final de línea
-    sys.stdout.flush()
-
-# Colores según el estado de los CPs
+# Colores por estado de CP
 COLORS = {
-    "ACTIVADO": Back.GREEN,
-    "SUMINISTRANDO": Back.GREEN,
-    "PARADO": Back.YELLOW,
-    "AVERIADO": Back.RED,
-    "DESCONECTADO": Back.WHITE + Fore.BLACK,
+    "ACTIVADO": "#77E977",
+    "SUMINISTRANDO": "#77E977",
+    "PARADO": "#FFA500",
+    "AVERIADO": "#FF0000",
+    "DESCONECTADO": "#9E9B9B",
 }
 
-# Datos de consumo en tiempo real por CP (solo visualización)
-CP_CONSUMPTION_DATA = {}
+# Mostrar logs en la GUI
+def safe_log(msg: str):
+    global gui_instance
+    if gui_instance is not None:
+        gui_instance.log(msg)
 
-# ==============================================================
-# Utilidades
-# ==============================================================
+# ======================================================================
+# Utilidades BD (SQLite)
+# ======================================================================
 
-def limpiar_pantalla():
-    os.system('cls' if os.name == 'nt' else 'clear')
+# Ejecutar sentencia
+def db_execute(conn, query, params=()):
+    cur = conn.cursor()
+    cur.execute(query, params)
+    conn.commit()
+    return cur
 
+# Recoger registros
+def db_fetchall(conn, query, params=()):
+    cur = conn.cursor()
+    cur.execute(query, params)
+    return cur.fetchall()
 
-def log_color(prefix, msg, color=Style.RESET_ALL):
-    print(color + f"{prefix} {msg}" + Style.RESET_ALL)
+# Insertar CP si no existe
+# Si existe, actualizar precio, ubicacion y estado
+def upsert_cp(conn, id_cp: str, estado: str, precio: float, ubicacion: str):
+    
+    db_execute(conn, """
+        INSERT INTO CP (idCP, estado, precio, ubicacion)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(idCP) DO UPDATE SET
+            estado=excluded.estado,
+            precio=excluded.precio,
+            ubicacion=excluded.ubicacion
+    """, (id_cp, estado, precio, ubicacion))
 
+# ======================================================================
+# Inicializar central
+# ======================================================================
 
-# ====================================================================================
-# HILO GÉNERICO CON KAFKA (consume de un topic y despacha a la lógica correspondiente)
-# ====================================================================================
+# Marca todos los CPs existentes como DESCONECTADOS al iniciar la Central.
+def inicializar_estado_cps():
+    try:
+        with sqlite3.connect(BBDD) as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE CP SET estado = 'DESCONECTADO'")
+            conn.commit()
+            safe_log("[CENTRAL] Todos los CPs marcados como DESCONECTADOS al iniciar.")
+        actualizar_pantalla.set()  # Forzamos un refresco inicial de la GUI
+    except sqlite3.Error as e:
+        safe_log(f"[CENTRAL] [BBDD] Error inicializando estados de CPs: {e}")
 
-def consume_loop(topic, producer, consumer, db_host):
+# ======================================================================
+# Lógica de negocio con KAFKA
+# ======================================================================
+
+# Hilos de consumidores
+def consume_loop(topic, producer, consumer):
     conn = None
     try:
-        conn = get_connection(db_host) # Cada hilo mantiene su propia conexión a BD para evitar contención.
+        # Creamos una conexión para cada hilo
+        conn = sqlite3.connect(BBDD, check_same_thread=False)
         while not stop_event.is_set():
-            records = consumer.poll(timeout_ms=1000)
+            records = consumer.poll(timeout_ms=500)
             if not records:
                 continue
-            for tp, msgs in records.items():
+            for _tp, msgs in records.items():
                 for msg in msgs:
                     event = msg.value
-                    print(f"[CENTRAL][Kafka] Mensaje en {topic}: {event}")
                     try:
-                        if topic == CP_REGISTER:
-                            registrar_CP(event, conn)
-                        elif topic == CP_HEALTH:
-                            comprobar_salud_CP(event, conn)
-                        elif topic == CP_STATUS:
+                        if topic == CP_STATUS:
                             cambiar_estado_CP(event, conn)
                         elif topic == CP_CONSUMPTION:
-                            monitorizar_CP(event)
+                            monitorizar_consumo_CP(event)
                         elif topic == CP_SUPPLY_COMPLETE:
                             enviar_ticket(event, conn, producer)
-                        elif topic in (SUPPLY_REQUEST_TO_CENTRAL, CHARGING_REQUESTS):
+                        elif topic == SUPPLY_REQUEST_TO_CENTRAL:
                             procesar_peticion_suministro(event, conn, producer)
                     except Exception as e:
-                        print(f"[CENTRAL] Excepción tramitando mensaje de {topic}: {e}")
+                        safe_log(f"[CENTRAL] Excepción tramitando topic {topic}: {e}")
     except Exception as e:
-        print(f"[CENTRAL] Excepción en hilo de consumo ({topic}): {e}")
+        safe_log(f"[CENTRAL] Excepción en hilo de consumo ({topic}): {e}")
     finally:
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
         try:
             consumer.close()
         except Exception:
             pass
-
-
-# ===============================================================
-# HILO INTERACTIVO DE COMANDOS (teclado no bloqueante con msvcrt)
-# ===============================================================
-
-def command_loop(producer, db_host):
-    global current_input
-    buffer = ""
-    conn = None
-    try:
-        conn = get_connection(db_host)
-        with console_lock:
-            print("> ", end="", flush=True)
-        while not stop_event.is_set():
-            if msvcrt.kbhit():
-                char = msvcrt.getwch()
-
-                if char == "\r":  # ENTER
-                    with console_lock:
-                        print()  # bajar de línea
-                    cmd = buffer.strip().lower()
-                    buffer = ""
-                    current_input = ""
-
-                    if not cmd:
-                        with console_lock:
-                            print_prompt()
-                        continue
-
-                    if cmd == "salir":
-                        with console_lock:
-                            print("\n[CENTRAL] Cerrando CENTRAL...")
-                        stop_event.set()
-                        break
-
-                    elif cmd.startswith("parar"):
-                        parts = cmd.split()
-                        if len(parts) == 2:
-                            target = parts[1]
-                            try:
-                                cursor = conn.cursor()
-                                if target == "todos":
-                                    cursor.execute("UPDATE CP SET estado=%s;", ("PARADO",))
-                                    with console_lock:
-                                        print("[CENTRAL] Enviada orden PARAR a todos los CPs")
-                                else:
-                                    cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("PARADO", target))
-                                    with console_lock:
-                                        print(f"[CENTRAL] Enviada orden PARAR a CP {target}")
-                                conn.commit()
-                                producer.send(CP_CONTROL, {"accion": "PARAR", "idCP": target})
-                                producer.flush()
-                                actualizar_pantalla.set()
-                            except Exception as e:
-                                with console_lock:
-                                    print(f"[CENTRAL][DB] Error al ejecutar PARAR: {e}")
-                                try:
-                                    conn.close()
-                                except Exception:
-                                    pass
-                                time.sleep(1)
-                                with console_lock:
-                                    print("[CENTRAL][DB] Reconectando a la base de datos...")
-                                conn = get_connection(db_host)
-                                with console_lock:
-                                    print("[CENTRAL][DB] Reconexión exitosa.")
-
-                    elif cmd.startswith("reanudar"):
-                        parts = cmd.split()
-                        if len(parts) == 2:
-                            target = parts[1]
-                            try:
-                                cursor = conn.cursor()
-                                if target == "todos":
-                                    cursor.execute("UPDATE CP SET estado=%s;", ("ACTIVADO",))
-                                    with console_lock:
-                                        print("[CENTRAL] Enviada orden REANUDAR a todos los CPs")
-                                else:
-                                    cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("ACTIVADO", target))
-                                    with console_lock:
-                                        print(f"[CENTRAL] Enviada orden REANUDAR a CP {target}")
-                                conn.commit()
-                                producer.send(CP_CONTROL, {"accion": "REANUDAR", "idCP": target})
-                                producer.flush()
-                                actualizar_pantalla.set()
-                            except Exception as e:
-                                with console_lock:
-                                    print(f"[CENTRAL][DB] Error al ejecutar REANUDAR: {e}")
-                                try:
-                                    conn.close()
-                                except Exception:
-                                    pass
-                                time.sleep(1)
-                                with console_lock:
-                                    print("[CENTRAL][DB] Reconectando a la base de datos...")
-                                conn = get_connection(db_host)
-                                with console_lock:
-                                    print("[CENTRAL][DB] Reconexión exitosa.")
-
-                    else:
-                        with console_lock:
-                            print(f"[CENTRAL] Comando no reconocido: {cmd}")
-
-                    with console_lock:
-                        print_prompt()
-
-                elif char == "\b":  # BACKSPACE
-                    if buffer:
-                        buffer = buffer[:-1]
-                        current_input = buffer
-                        with console_lock:
-                            print_prompt()
-                else:
-                    buffer += char
-                    current_input = buffer
-                    with console_lock:
-                        print_prompt()
-            else:
-                time.sleep(0.05)
-    except Exception as e:
-        with console_lock:
-            print(f"[CENTRAL] Excepción general en command_loop: {e}")
-    finally:
         if conn:
             try:
                 conn.close()
             except Exception:
                 pass
 
-
-# ==============================================================
-# PANEL DE MONITORIZACIÓN DE CPs
-# ==============================================================
-
-# Se invoca al arrancar la Central para mostrar todos los CPs como DESCONECTADO hasta que estos se conecten
-def reconectar_CPs(conn):
-    limpiar_pantalla()
-    cursor = conn.cursor()
-    cursor.execute("SELECT idCP, precio, ubicacion FROM CP;")
-    cps = cursor.fetchall()
-
-    print("[CENTRAL] Monitorización de CPs:")
-    print("--------------------------------")
-    for idCP, precio, ubicacion in cps:
-        color = COLORS.get("DESCONECTADO", "")
-        print(color + f"  - CP {idCP} : en {ubicacion} (precio {precio} €/kWh) -> Estado: DESCONECTADO")
-
-    print("\n[CENTRAL] Comandos (ENTER para ejecutar):")
-    print("  > parar <id_CP / todos>")
-    print("  > reanudar <id_CP / todos>")
-    print("  > salir\n")
-
-
-# Redibuja el panel de CPs
-def mostrar_CPs(conn):
-    cursor = conn.cursor()
-    cursor.execute("SELECT idCP, estado, precio, ubicacion FROM CP;")
-    cps = cursor.fetchall()
-
-    panel_lines = []
-    panel_lines.append("[CENTRAL] Monitorización de CPs:")
-    panel_lines.append("--------------------------------")
-    for idCP, estado, precio, ubicacion in cps:
-        color = COLORS.get(estado, "")
-        panel_lines.append(color + f"  - CP {idCP} : en {ubicacion} (precio {precio} €/kWh) -> Estado: {estado}" + Style.RESET_ALL)
-        if estado == "SUMINISTRANDO" and idCP in CP_CONSUMPTION_DATA:
-            data = CP_CONSUMPTION_DATA[idCP]
-            panel_lines.append(f"  Consumo: {data['kwh']:.2f} kWh | Importe: {data['importe']:.2f} € | Conductor: {data['conductor']}")
-
-    panel_lines.append("")  # línea en blanco
-    panel_lines.append("[CENTRAL] Comandos (ENTER para ejecutar):")
-    panel_lines.append("  > parar <id_CP / todos>")
-    panel_lines.append("  > reanudar <id_CP / todos>")
-    panel_lines.append("  > salir")
-    panel_lines.append("")  # línea en blanco
-
-    # Todo esto es para evitar que se borre lo que se escriba por terminal y que así se puedan procesar correctamente los comandos
-    with console_lock:
-        # Mover cursor al inicio y limpiar pantalla (solo el contenido, repondremos el prompt después)
-
-        sys.stdout.write("\033[2J\033[H")  # Borra toda la pantalla y mueve el cursor arriba sin causar flicker
-        sys.stdout.flush()
-
-        sys.stdout.write("\n".join(panel_lines) + "\n")
-        # Reimprimir el prompt con lo que el usuario llevaba tecleado
-        print_prompt()
-
-
-# Hilo que contiene el bucle para mostrar CPs actualizando pantalla de mientras y demás
-def mostrar_CPs_loop(db_host):
-    conn = None
-    try:
-        conn = get_connection(db_host)
-        while not stop_event.is_set():
-            actualizar_pantalla.wait(timeout=1)
-            if stop_event.is_set():
-                break
-            if actualizar_pantalla.is_set():
-                actualizar_pantalla.clear()
-                mostrar_CPs(conn)
-    except Exception as e:
-        print(f"[CENTRAL][DB] Error en mostrar_CPs_loop: {e}")
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-
-# ==============================================================
-# LÓGICA DE NEGOCIO / ACCIONES
-# ==============================================================
-
-def registrar_CP(event, conn):
-    id_cp = str(event["idCP"]) 
-    precio = event.get("precio", 0)
-    ubicacion = event.get("ubicacion", "")
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO CP (idCP, estado, precio, ubicacion)
-        VALUES (%s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE precio=%s, ubicacion=%s;
-        """,
-        (id_cp, "ACTIVADO", precio, ubicacion, precio, ubicacion),
-    )
-    conn.commit()
-    print(f"[CENTRAL] Registrado CP {id_cp} en BD")
-    actualizar_pantalla.set()
-
-
+# Cambiar el estado del CP debido a alguna accion relacionada con un suministro
 def cambiar_estado_CP(event, conn):
-    id_cp = event["idCP"]
-    estado = event["estado"]
-    cursor = conn.cursor()
+    id_cp = str(event.get("idCP"))
+    estado = event.get("estado")
+    cur = conn.cursor()
+    cur.execute("SELECT estado FROM CP WHERE idCP = ?", (id_cp,))
+    row = cur.fetchone()
 
-    # Comprobar el estado actual antes de actualizar
-    cursor.execute("SELECT estado FROM CP WHERE idCP=%s;", (id_cp,))
-    row = cursor.fetchone()
-
-    # No hacer nada si ya está en el mismo estado
-    if row and row[0] == estado:
-        return
-
-    if id_cp == "todos":
-        cursor.execute("UPDATE CP SET estado=%s;", (estado,))
+    if not row or row[0] != estado:
+        cur.execute("UPDATE CP SET estado = ? WHERE idCP = ?", (estado, id_cp))
         conn.commit()
-        print(f"[CENTRAL] Estado de todos los CPs actualizado a: {estado}")
-    else:
-        cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", (estado, id_cp))
-        conn.commit()
-        print(f"[CENTRAL] Estado actualizado CP {id_cp} a: {estado}")
-
+        safe_log(f"[CENTRAL] Estado actualizado CP {id_cp} -> {estado}")
+    
     actualizar_pantalla.set()
 
-
-def comprobar_salud_CP(event, conn):
-    id_cp = event["idCP"]
-    salud = event["salud"]
-    cursor = conn.cursor()
-
-    # Obtener el estado actual
-    cursor.execute("SELECT estado FROM CP WHERE idCP=%s;", (id_cp,))
-    row = cursor.fetchone()
-    if row:
-        estado_actual = row[0]
-    else:
-        estado_actual = None
-
-    if salud == "KO":
-        nuevo_estado = "AVERIADO"
-        if estado_actual != "AVERIADO":
-            print(f"[CENTRAL] CP {id_cp} se ha averiado")
-            cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", (nuevo_estado, id_cp))
-            conn.commit()
-            actualizar_pantalla.set()
-    else:
-        nuevo_estado = "ACTIVADO"
-        if estado_actual != "ACTIVADO":
-            print(f"[CENTRAL] CP {id_cp} se ha recuperado")
-            cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", (nuevo_estado, id_cp))
-            conn.commit()
-            actualizar_pantalla.set()
-
-
-def procesar_peticion_suministro(event, conn, producer):
-    """Central valida disponibilidad del CP y, si procede, autoriza.
-    También notifica al Driver el resultado de la autorización.
-    """
-    print(f"[CENTRAL] Petición de recarga recibida: {event}")
+# Monitorizar varios datos si el CP se haya suministrando
+def monitorizar_consumo_CP(event):
     id_cp = str(event.get("idCP"))
-    id_driver = str(event.get("idDriver")) if event.get("idDriver") is not None else None
 
-    if not id_cp:
-        print("[CENTRAL] ERROR: Petición sin idCP.")
-        return
-
-    cursor = conn.cursor()
-    cursor.execute("SELECT estado FROM CP WHERE idCP=%s;", (id_cp,))
-    row = cursor.fetchone()
-
-    if row is None:
-        print(f"[CENTRAL] ERROR: El CP {id_cp} no está registrado en la BD.")
-        return
-
-    estado = row[0]
-    if estado == "ACTIVADO":
-
-        # 1) Autoriza al CP
-        try:
-            payload_cp = {"idCP": id_cp, "action": "authorize"}
-            if id_driver is not None:
-                payload_cp["idDriver"] = id_driver
-            producer.send(CP_AUTHORIZE_SUPPLY, payload_cp)
-            producer.flush()
-            print(f"[CENTRAL] CP {id_cp} disponible. Autorización enviada al CP.")
-        except Exception as e:
-            print(f"[CENTRAL] Error enviando autorización a CP: {e}")
-
-        # 2) Notifica al Driver la autorización (canal DRIVER_SUPPLY_COMPLETE)
-        if id_driver is not None:
-            try:
-                producer.send(
-                    DRIVER_SUPPLY_COMPLETE,
-                    {
-                        "idCP": id_cp,
-                        "ticket": {
-                            "idDriver": id_driver,
-                            "estado": "AUTORIZADO",
-                            "mensaje": "Autorizado por CENTRAL. Puede comenzar el suministro cuando el CP inicie."
-                        },
-                    },
-                )
-                producer.flush()
-                print(f"[CENTRAL] Notificada autorización al DRIVER {id_driver}.")
-            except Exception as e:
-                print(f"[CENTRAL] Error notificando al driver: {e}")
-    else:
-        print(f"[CENTRAL] CP {id_cp} no disponible (estado actual: {estado}).")
-        
-        # Si conocemos al driver, notificamos rechazo inmediato
-        if id_driver is not None:
-            try:
-                producer.send(
-                    DRIVER_SUPPLY_COMPLETE,
-                    {
-                        "idCP": id_cp,
-                        "ticket": {
-                            "idDriver": id_driver,
-                            "estado": "RECHAZADO",
-                            "motivo": f"CP_NO_DISPONIBLE_{estado}"
-                        },
-                    },
-                )
-                producer.flush()
-            except Exception as e:
-                print(f"[CENTRAL] Error notificando rechazo al driver: {e}")
-
-
-def monitorizar_CP(event):
-    id_cp = str(event["idCP"])
     CP_CONSUMPTION_DATA[id_cp] = {
         "kwh": float(event.get("consumo", 0.0)),
         "importe": float(event.get("importe", 0.0)),
@@ -464,103 +149,87 @@ def monitorizar_CP(event):
     }
     actualizar_pantalla.set()
 
+# Central valida la disponibilidad del CP y, si procede, autoriza
+def procesar_peticion_suministro(event, conn, producer):
+    safe_log(f"[CENTRAL] Petición de recarga: {event}")
+    id_cp = str(event.get("idCP"))
+    id_driver = str(event.get("idDriver")) if event.get("idDriver") is not None else None
 
+    if not id_cp:
+        safe_log("[CENTRAL] ERROR: Petición sin idCP.")
+        return
+
+    cur = conn.cursor()
+    cur.execute("SELECT estado FROM CP WHERE idCP = ?", (id_cp,))
+    row = cur.fetchone()
+    
+    # Si no se encuentra el CP en la BD, mandar noti al conductor
+    if row is None:
+        safe_log(f"[CENTRAL] ERROR: CP {id_cp} no está registrado en la BD.")
+        if id_driver is not None:
+            try:
+                payload_cp = {"idCP": id_cp, "idDriver": id_driver, "authorize": "NO"}
+                producer.send(AUTHORIZE_SUPPLY, payload_cp)
+                producer.flush()
+            except Exception as e:
+                safe_log(f"[CENTRAL] Error notificando al driver que el CP no existe: {e}")
+        return
+
+
+    # Obtener estado del CP
+    estado = row[0]
+
+    # Si el CP se encuentra disponible, entonces entonces autoriza el suministro notificando al CP y al driver
+    if estado == "ACTIVADO":
+        if id_driver is not None:
+            try:
+                payload_cp = {"idCP": id_cp, "idDriver": id_driver, "authorize": "YES"}
+                producer.send(AUTHORIZE_SUPPLY, payload_cp)
+                producer.flush()
+                safe_log(f"[CENTRAL] CP {id_cp} disponible. Permiso para comenzar el suministro CONCEDIDO.")
+            except Exception as e:
+                safe_log(f"[CENTRAL] Error enviando autorización CP: {e}")
+    
+    # Si el CP no se encuentra disponible, rechazar petición
+    else:
+        safe_log(f"[CENTRAL] CP {id_cp} NO DISPONIBLE (estado: {estado}).")
+        try:
+            payload_cp = {"idCP": id_cp, "idDriver": id_driver, "authorize": "NO"}
+            producer.send(AUTHORIZE_SUPPLY, payload_cp)
+            producer.flush()
+            safe_log(f"[CENTRAL] CP {id_cp} disponible. Permiso para comenzar el suministro DENEGADO.")
+        except Exception as e:
+            safe_log(f"[CENTRAL] Error enviando autorización CP: {e}")
+
+
+# Enviar ticket al conductor de que el suministro ha finalizado
 def enviar_ticket(event, conn, producer):
-    id_cp = str(event["idCP"])
+    id_cp = str(event.get("idCP"))
     ticket = event.get("ticket", {})
     try:
-        producer.send(DRIVER_SUPPLY_COMPLETE, {"idCP": id_cp, "ticket": ticket})
+        producer.send(DRIVER_SUPPLY_COMPLETE, {"ticket": ticket})
         producer.flush()
-        print(f"[CENTRAL] Suministro finalizado CP {id_cp}, ticket enviado al Driver")
+        safe_log(f"[CENTRAL] Suministro finalizado CP {id_cp}, ticket reenviado al Driver.")
     except Exception as e:
-        print(f"[CENTRAL] Error reenviando ticket al Driver: {e}")
+        safe_log(f"[CENTRAL] Error reenviando ticket al Driver: {e}")
 
-    cursor = conn.cursor()
-    cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("ACTIVADO", id_cp))
+    cur = conn.cursor()
+    cur.execute("UPDATE CP SET estado = ? WHERE idCP = ?", ("ACTIVADO", id_cp))
     conn.commit()
     CP_CONSUMPTION_DATA.pop(id_cp, None)
     actualizar_pantalla.set()
 
+# ======================================================================
+# Lógica de negocio con SOCKETS
+# ======================================================================
 
-# ==============================================================
-# SERVIDOR TCP PARA MONITORES (EV_CP_M)
-# ==============================================================
-
-def handle_tcp_client(conn_sock, addr, db_host, producer):
-    """Atiende a un monitor EV_CP_M. Lee líneas JSON separadas por '\n'."""
-    db_conn = None
-    id_cp_asociado = None  # recordaremos qué CP estaba en esta conexión
-
-    try:
-        db_conn = get_connection(db_host)
-        conn_file = conn_sock.makefile('r')
-
-        while not stop_event.is_set():
-            line = conn_file.readline()
-            if not line:
-                break
-            line = line.strip()
-            if not line:
-                continue
-
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                print(f"[CENTRAL][TCP] JSON inválido desde {addr}: {line}")
-                continue
-
-            msg_type = msg.get("type")
-            id_cp_asociado = msg.get("idCP", id_cp_asociado)  # guarda último CP conocido
-
-            try:
-                if msg_type == "register":
-                    registrar_CP(msg, db_conn)
-                elif msg_type == "status":
-                    cambiar_estado_CP({"idCP": msg.get("idCP"), "estado": msg.get("estado")}, db_conn)
-                elif msg_type == "health":
-                    salud = msg.get("salud")
-                    if salud == "RECUPERADO":
-                        salud = "OK"
-                    comprobar_salud_CP({"idCP": msg.get("idCP"), "salud": salud}, db_conn)
-                elif msg_type == "alert":
-                    print(f"[CENTRAL][TCP] ALERTA de {msg.get('idCP')}: {msg.get('alerta')}")
-                else:
-                    print(f"[CENTRAL][TCP] Tipo desconocido desde {addr}: {msg_type}")
-            except Exception as e:
-                print(f"[CENTRAL][TCP] Error tramitando mensaje de {addr}: {e}")
-
-    except Exception as e:
-        print(f"[CENTRAL][TCP] Error en cliente {addr}: {e}")
-
-    finally:
-        # Aquí manejamos la desconexión del monitor
-        if id_cp_asociado:
-            try:
-                cursor = db_conn.cursor()
-                cursor.execute("UPDATE CP SET estado=%s WHERE idCP=%s;", ("DESCONECTADO", id_cp_asociado))
-                db_conn.commit()
-                print(f"[CENTRAL][TCP] Monitor {addr} desconectado -> CP {id_cp_asociado} marcado como DESCONECTADO")
-                actualizar_pantalla.set()
-            except Exception as e:
-                print(f"[CENTRAL][TCP] Error al marcar CP {id_cp_asociado} como DESCONECTADO: {e}")
-
-        try:
-            conn_sock.close()
-        except Exception:
-            pass
-        try:
-            if db_conn:
-                db_conn.close()
-        except Exception:
-            pass
-
-
-def tcp_server(listen_port, db_host, producer):
+'''
+def tcp_server(listen_port, producer):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("0.0.0.0", int(listen_port)))
     s.listen(8)
-    print(f"[CENTRAL] Servidor TCP escuchando en puerto {listen_port}")
+    safe_log(f"[CENTRAL] Servidor TCP escuchando en puerto {listen_port}")
 
     try:
         while not stop_event.is_set():
@@ -570,12 +239,12 @@ def tcp_server(listen_port, db_host, producer):
             except socket.timeout:
                 continue
             except Exception as e:
-                print(f"[CENTRAL][TCP] Error aceptando conexión: {e}")
+                safe_log(f"[CENTRAL][TCP] Error aceptando conexión: {e}")
                 continue
 
             threading.Thread(
                 target=handle_tcp_client,
-                args=(conn_sock, addr, db_host, producer),
+                args=(conn_sock, addr, producer),
                 daemon=True,
             ).start()
     finally:
@@ -583,34 +252,332 @@ def tcp_server(listen_port, db_host, producer):
             s.close()
         except Exception:
             pass
+'''
 
+# Servidor TCP para la comunicación entre Central y los distintos CPs
+def tcp_server(listen_port, producer):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("0.0.0.0", int(listen_port)))
+    server.listen()
+    while True:
+        socket_conn, addr = server.accept()
+        threading.Thread(target=handle_tcp_client,args=(socket_conn,addr, producer),daemon=True).start()
 
-# ==============================================================
-# MAIN
-# ==============================================================
+# Socket concreto entre Central y un CP_Monitor 
+def handle_tcp_client(socket_conn, addr, producer):
+    db_conn = None
+    id_cp_asociado = None
+    try:
+        db_conn = sqlite3.connect(BBDD, check_same_thread=False)
+        conn_file = socket_conn.makefile('r', encoding='utf-8')
+
+        # Va leyendo las lineas del archivo JSON separadas por '\n'
+        while not stop_event.is_set():
+            line = conn_file.readline() # Lee linea
+            if not line: # Si se ha llegado al final del archivo se sale del bucle
+                break
+            line = line.strip() # Elimina espacios en blanco, saltos de linea, etc.
+            if not line: # Si después de limpiar la línea queda vacía => la ignora y pasa a la siguiente iteración
+                continue
+
+            # Trata de leer el contenido
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                safe_log(f"[CENTRAL][TCP] JSON inválido desde {addr}: {line}")
+                continue
+
+            # Obtiene tipo de mensaje y CP del que proviene
+            msg_type = msg.get("type")
+            id_cp_asociado = msg.get("idCP", id_cp_asociado)
+
+            # Despachamos al módulo que toque
+            try:
+                if msg_type == "register":
+                    registrar_CP(msg, db_conn)
+                elif msg_type == "alert":
+                    safe_log(f"[CENTRAL][TCP] ALERTA de {msg.get('idCP')}: {msg.get('alerta')}")
+                elif msg_type == "health":
+                    comprobar_salud_CP({"idCP": msg.get("idCP"), "salud": msg.get("salud")}, db_conn)
+            except Exception as e:
+                safe_log(f"[CENTRAL][TCP] Error tramitando mensaje de {addr}: {e}")
+
+    except Exception as e:
+        safe_log(f"[CENTRAL][TCP] Error en cliente {addr}: {e}")
+
+    finally:
+        # Marca CP como desconectado si había uno asociado
+        if id_cp_asociado:
+            try:
+                cur = db_conn.cursor()
+                cur.execute("UPDATE CP SET estado = ? WHERE idCP = ?", ("DESCONECTADO", id_cp_asociado))
+                db_conn.commit()
+                safe_log(f"[CENTRAL][TCP] Monitor {addr} desconectado -> CP {id_cp_asociado} DESCONECTADO")
+                actualizar_pantalla.set()
+            except Exception as e:
+                safe_log(f"[CENTRAL][TCP] Error al marcar DESCONECTADO: {e}")
+
+        try:
+            socket_conn.close()
+        except Exception:
+            pass
+        try:
+            if db_conn:
+                db_conn.close()
+        except Exception:
+            pass
+
+# Registrar un CP
+def registrar_CP(event, conn):
+    id_cp = str(event.get("idCP"))
+    precio = float(event.get("precio", 0))
+    ubicacion = event.get("ubicacion", "")
+    upsert_cp(conn, id_cp, "ACTIVADO", precio, ubicacion)
+    safe_log(f"[CENTRAL] Registrado/actualizado CP {id_cp} en BD")
+    actualizar_pantalla.set()
+
+# Monitorizar la salud del CP
+def comprobar_salud_CP(event, conn):
+    id_cp = str(event.get("idCP"))
+    salud = event.get("salud")
+    cur = conn.cursor()
+    cur.execute("SELECT estado FROM CP WHERE idCP = ?", (id_cp,))
+    row = cur.fetchone()
+    estado_actual = row[0] if row else None
+
+    # Si el CP no se encuentra parado por orden de central...
+    if estado_actual != "PARADO":
+        if salud == "KO":
+            if estado_actual != "AVERIADO":
+                safe_log(f"[CENTRAL] CP {id_cp} AVERIADO")
+                cur.execute("UPDATE CP SET estado = ? WHERE idCP = ?", ("AVERIADO", id_cp))
+                conn.commit()
+                actualizar_pantalla.set()
+        else:  # OK
+            if estado_actual != "ACTIVADO" and estado_actual != "SUMINISTRANDO":
+                safe_log(f"[CENTRAL] CP {id_cp} RECUPERADO")
+                cur.execute("UPDATE CP SET estado = ? WHERE idCP = ?", ("ACTIVADO", id_cp))
+                conn.commit()
+                actualizar_pantalla.set()
+
+# ======================================================================
+# Enviar lista de CPs disponibles a los Drivers
+# ======================================================================
+
+def enviar_lista_cps_disponibles(producer):
+    while not stop_event.is_set():
+        try:
+            with sqlite3.connect(BBDD) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT idCP FROM CP WHERE estado = 'ACTIVADO'")
+                cps = [row[0] for row in cur.fetchall()]
+            producer.send(LISTA_CPS_DISPONIBLES, cps)
+            producer.flush()
+        except Exception as e:
+            safe_log(f"[CENTRAL] Error enviando lista de CPs disponibles: {e}")
+        time.sleep(5)  # cada 5 segundos
+
+# ======================================================================
+# GUI Tkinter
+# ======================================================================
+
+class CentralGUI(tk.Tk):
+    # INICIALIZAR INTERFAZ
+    def __init__(self, producer):
+        super().__init__()
+        self.title("EV Central")
+        self.geometry("1000x650")
+        self.producer = producer
+
+        # Tabla con la monitorización de los CPs
+        cols = ("idCP", "Estado", "Precio €/kWh", "Ubicación", "Consumo kWh", "Importe €", "Conductor")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=16)
+        for c in cols:
+            self.tree.heading(c, text=c)
+            self.tree.column(c, stretch=True, width=120)
+        self.tree.column("idCP", width=80)
+        self.tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 6))
+
+        # Botones para mandar órdenes a los CPs
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(fill=tk.X, padx=10, pady=6)
+        tk.Button(btn_frame, text="Parar un CP", command=self.parar_sel).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Reanudar un CP", command=self.reanudar_sel).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Parar TODOS", command=self.parar_todos).pack(side=tk.LEFT, padx=15)
+        tk.Button(btn_frame, text="Reanudar TODOS", command=self.reanudar_todos).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Salir", command=self.salir).pack(side=tk.RIGHT, padx=5)
+
+        # Logs
+        self.log_text = tk.Text(self, height=10, wrap=tk.WORD, bg="#1e1e1e", fg="#d6ffd6")
+        self.log_text.pack(fill=tk.BOTH, expand=False, padx=10, pady=(6, 10))
+
+        # Refrescar pantalla cada tanto
+        self.after(500, self.refresco_periodico)
+
+        # De-seleccionar cualquier fila si se clica fuera de los items
+        self.tree.bind("<Button-1>", self.click_fuera)
+
+    # MOSTRAR MENSAJES DE LOG
+    def log(self, msg):
+        self.log_text.insert(tk.END, msg + "\n")
+        self.log_text.see(tk.END)
+
+    # REFRESCAR PANTALLA
+    def refresco_periodico(self):
+        if stop_event.is_set():
+            return
+
+        recargar = False
+
+        # Comprobar si se ha ordenado actualizar pantalla debido a algun cambio en los CPs
+        if actualizar_pantalla.is_set():
+            actualizar_pantalla.clear()
+            recargar = True
+
+        # Comprobar si hay CPs suministrando
+        cps = self.leer_cps()
+        suministrando = any(estado == "SUMINISTRANDO" for _, estado, *_ in cps)
+        if suministrando:
+            recargar = True
+
+        #  Actualizar la pantalla si hay algún cambio
+        if recargar:
+            self.actualizar_tabla()
+
+        self.after(1000 if suministrando else REFRESH_MS, self.refresco_periodico)
+
+    # DE-SELECCIONAR UN ITEM SI SE CLICKA FUERA
+    def click_fuera(self, event):
+        region = self.tree.identify_region(event.x, event.y)
+        if region not in ("cell", "tree"):
+            self.tree.selection_remove(self.tree.selection())
+
+    # LEER INFO DE CPS DE LA BD
+    def leer_cps(self):
+        try:
+            with sqlite3.connect(BBDD) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT idCP, estado, precio, ubicacion FROM CP ORDER BY idCP ASC")
+                return cur.fetchall()
+        except Exception as e:
+            self.log(f"[CENTRAL][GUI] Error leyendo CPs: {e}")
+            return []
+
+    # ACTUALIZAR TABLA DE MONITORIZACIÓN DE CPs
+    def actualizar_tabla(self):
+        selected = self._sel_id()  # Guardar el CP seleccionado antes de refrescar
+        cps = self.leer_cps()
+        self.tree.delete(*self.tree.get_children())
+
+        # Procesar fila a fila
+        for idCP, estado, precio, ubicacion in cps:
+            consumo = CP_CONSUMPTION_DATA.get(str(idCP), {})
+            kwh = consumo.get("kwh", None)
+            importe = consumo.get("importe", None)
+            conductor = consumo.get("conductor", "")
+
+            # Solo mostrar consumo e importe si el CP está suministrando
+            if estado == "SUMINISTRANDO" and kwh is not None and importe is not None:
+                kwh_display = f"{kwh:.2f}"
+                importe_display = f"{importe:.2f}"
+            else:
+                kwh_display = ""
+                importe_display = ""
+
+            iid = self.tree.insert("", tk.END,
+                values=(idCP, estado, precio, ubicacion, kwh_display, importe_display, conductor))
+
+            # Generar items
+            bg = COLORS.get(estado, COLORS["DESCONECTADO"])
+            self.tree.item(iid, tags=(estado,))
+            self.tree.tag_configure(estado, background=bg)
+
+            if idCP == selected:
+                self.tree.selection_set(iid)
+
+    # OBTENER EL CP QUE SE ESTÁ SELECCIONANDO
+    def _sel_id(self):
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        vals = self.tree.item(sel[0], "values")
+        return vals[0] if vals else None
+
+    # ORDEN: parar un CP
+    def parar_sel(self):
+        id_cp = self._sel_id()
+        if not id_cp:
+            self.log("[CENTRAL][GUI] Selecciona un CP primero.")
+            return
+        try:
+            # Marca en BD (opcional; se actualizará asimismo por el CP/central)
+            with sqlite3.connect(BBDD) as conn:
+                db_execute(conn, "UPDATE CP SET estado = ? WHERE idCP = ?", ("PARADO", id_cp))
+            self.producer.send(CP_CONTROL, {"accion": "PARAR", "idCP": id_cp})
+            self.producer.flush()
+            self.log(f"[CENTRAL] Orden PARAR enviada a CP {id_cp}")
+            actualizar_pantalla.set()
+        except Exception as e:
+            self.log(f"[CENTRAL][GUI] Error PARAR {id_cp}: {e}")
+
+    # ORDEN: reanudar un CP
+    def reanudar_sel(self):
+        id_cp = self._sel_id()
+        if not id_cp:
+            self.log("[CENTRAL][GUI] Selecciona un CP primero.")
+            return
+        try:
+            with sqlite3.connect(BBDD) as conn:
+                db_execute(conn, "UPDATE CP SET estado = ? WHERE idCP = ?", ("ACTIVADO", id_cp))
+            self.producer.send(CP_CONTROL, {"accion": "REANUDAR", "idCP": id_cp})
+            self.producer.flush()
+            self.log(f"[CENTRAL] Orden REANUDAR enviada a CP {id_cp}")
+            actualizar_pantalla.set()
+        except Exception as e:
+            self.log(f"[CENTRAL][GUI] Error REANUDAR {id_cp}: {e}")
+
+    # ORDEN: parar TODOS los CPs
+    def parar_todos(self):
+        try:
+            with sqlite3.connect(BBDD) as conn:
+                db_execute(conn, "UPDATE CP SET estado = 'PARADO'")
+            self.producer.send(CP_CONTROL, {"accion": "PARAR", "idCP": "todos"})
+            self.producer.flush()
+            self.log("[CENTRAL] Enviada orden PARAR a TODOS")
+            actualizar_pantalla.set()
+        except Exception as e:
+            self.log(f"[CENTRAL][GUI] Error PARAR TODOS: {e}")
+
+    # ORDEN: reanudar TODOS los CPs
+    def reanudar_todos(self):
+        try:
+            with sqlite3.connect(BBDD) as conn:
+                db_execute(conn, "UPDATE CP SET estado = 'ACTIVADO'")
+            self.producer.send(CP_CONTROL, {"accion": "REANUDAR", "idCP": "todos"})
+            self.producer.flush()
+            self.log("[CENTRAL] Enviada orden REANUDAR a TODOS")
+            actualizar_pantalla.set()
+        except Exception as e:
+            self.log(f"[CENTRAL][GUI] Error REANUDAR TODOS: {e}")
+
+    # ORDEN: desconectar Central
+    def salir(self):
+        stop_event.set()
+        self.log("[CENTRAL] Cerrando aplicación...")
+        self.after(300, self.destroy)
+
+# ======================================================================
+# Main
+# ======================================================================
 
 def main():
     if len(sys.argv) < 4:
-        print("Uso: py EV_Central.py <puerto> <broker_ip:puerto> <db_ip>")
+        print("Uso: py EV_Central.py <puerto_tcp> <broker_ip:puerto> <db_ip>")
         sys.exit(1)
 
     listen_port = sys.argv[1]
     broker = sys.argv[2]
-    db_host = sys.argv[3]
-
-    # Conexión inicial a BD
-    conn = get_connection(db_host)
-    init_db(conn)
-
-    print("[CENTRAL] Bienvenido")
-    print("[CENTRAL] Conexión a BD establecida.")
-    print("[CENTRAL] Comandos disponibles:")
-    print("  > parar <id_CP / todos>")
-    print("  > reanudar <id_CP / todos>")
-    print("  > salir\n")
-
-    # Mostrar todos los CPs como DESCONECTADOS hasta que reporten
-    reconectar_CPs(conn)
+    db_host = sys.argv[3]   # Este parametro no es necesario con SQLite
 
     # Producer Kafka
     producer = KafkaProducer(
@@ -620,27 +587,11 @@ def main():
 
     # Consumidores Kafka
     consumers = {
-        CP_REGISTER: KafkaConsumer(
-            CP_REGISTER,
-            bootstrap_servers=[broker],
-            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id="central_register",
-            enable_auto_commit=True,
-            auto_offset_reset='earliest',
-        ),
-        CP_HEALTH: KafkaConsumer(
-            CP_HEALTH,
-            bootstrap_servers=[broker],
-            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id="central_health",
-            enable_auto_commit=True,
-            auto_offset_reset='earliest',
-        ),
-        CP_STATUS: KafkaConsumer(
+        CP_STATUS : KafkaConsumer(
             CP_STATUS,
             bootstrap_servers=[broker],
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id="central_status",
+            group_id="central_cp_status",
             enable_auto_commit=True,
             auto_offset_reset='earliest',
         ),
@@ -660,59 +611,54 @@ def main():
             enable_auto_commit=True,
             auto_offset_reset='earliest',
         ),
-        # REVISAR
-        CHARGING_REQUESTS: KafkaConsumer(
-            CHARGING_REQUESTS,
+        SUPPLY_REQUEST_VIA_CP: KafkaConsumer(
+            SUPPLY_REQUEST_VIA_CP,
             bootstrap_servers=[broker],
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id="central_requests",
+            group_id="central_supply_request_via_cp",
             enable_auto_commit=True,
             auto_offset_reset='earliest',
         ),
-        # REVISAR
         SUPPLY_REQUEST_TO_CENTRAL: KafkaConsumer(
             SUPPLY_REQUEST_TO_CENTRAL,
             bootstrap_servers=[broker],
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id="central_request_legacy",
+            group_id="central_supply_request_from_driver",
             enable_auto_commit=True,
             auto_offset_reset='earliest',
         ),
     }
 
-    print("[CENTRAL] Escuchando topics Kafka y conexiones TCP...\n")
-    print("> ", end="", flush=True)
+    safe_log("[CENTRAL] Escuchando topics Kafka y conexiones TCP...")
 
-    # Hilo servidor TCP (monitores)
-    t_tcp = threading.Thread(target=tcp_server, args=(listen_port, db_host, producer), daemon=True)
+    # Marcar CPs existentes como DESCONECTADOS (reinicio de Central)
+    inicializar_estado_cps()
+
+    # Hilo servidor TCP
+    t_tcp = threading.Thread(target=tcp_server, args=(listen_port, producer), daemon=True)
     t_tcp.start()
 
     # Hilos consumidores Kafka
     threads = []
     for topic, consumer in consumers.items():
-        t = threading.Thread(target=consume_loop, args=(topic, producer, consumer, db_host), daemon=True)
+        t = threading.Thread(target=consume_loop, args=(topic, producer, consumer), daemon=True)
         t.start()
         threads.append(t)
 
-    # Hilo pantalla
-    t_mostrar = threading.Thread(target=mostrar_CPs_loop, args=(db_host,), daemon=True)
-    t_mostrar.start()
+    # Hilo que informa periódicamente a los drivers sobre CPs disponibles
+    t_lista = threading.Thread(target=enviar_lista_cps_disponibles, args=(producer,), daemon=True)
+    t_lista.start()
 
-    # Hilo comandos
-    t_cmd = threading.Thread(target=command_loop, args=(producer, db_host), daemon=True)
-    t_cmd.start()
-
-    # Bucle de vida del proceso
+    # Lanzar GUI
+    global gui_instance
+    gui_instance = CentralGUI(producer)
     try:
-        while not stop_event.is_set():
-            time.sleep(0.5)
+        gui_instance.mainloop()
     except KeyboardInterrupt:
-        print("\n[CENTRAL] Interrupción manual. Cerrando...")
-        stop_event.set()
+        pass
     finally:
         stop_event.set()
-        print("[CENTRAL] Cerrando conexiones y esperando hilos...")
-
+        safe_log("[CENTRAL] Cerrando conexiones y esperando hilos...")
 
         for t in threads:
             t.join(timeout=2)
@@ -723,17 +669,8 @@ def main():
         except Exception:
             pass
 
-        try:
-            conn.close()
-        except Exception:
-            pass
+        safe_log("[CENTRAL] Recursos cerrados. Hasta luego.")
 
-        print("[CENTRAL] Recursos cerrados. Hasta luego.")
-
-
+# 
 if __name__ == "__main__":
     main()
-
-if __name__ == "__main__":
-    main()
-

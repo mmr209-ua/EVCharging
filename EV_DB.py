@@ -1,25 +1,36 @@
-#EV_DB
-import mysql.connector
+#EV_DB   
+import sqlite3
 
-def init_db(conn):
+BBDD = "Base_Datos.sqlite"
+
+try:
+    with open(BBDD, 'x'):
+        pass
+except:
+        print(f"{BBDD} ya creada")
+
+with sqlite3.connect(BBDD) as conn:
+
+    print(f"Conectado a {BBDD}")
+
     cursor = conn.cursor()
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS CP (
             idCP VARCHAR(10) PRIMARY KEY,
-            estado ENUM('ACTIVADO','PARADO','SUMINISTRANDO','AVERIADO','DESCONECTADO') NOT NULL,
+            estado TEXT NOT NULL CHECK (estado IN ('ACTIVADO','PARADO','SUMINISTRANDO','AVERIADO','DESCONECTADO')),
             precio DECIMAL(10,2) NOT NULL,
             ubicacion VARCHAR(100) NOT NULL
         );
     """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS CONDUCTOR (
-            idConductor INT AUTO_INCREMENT PRIMARY KEY
+            idConductor INTEGER PRIMARY KEY AUTOINCREMENT
         )
     """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS CONSUMO (
-            idConsumo INT AUTO_INCREMENT PRIMARY KEY,
+            idConsumo INTEGER PRIMARY KEY AUTOINCREMENT,
             conductor INT NOT NULL,
             cp VARCHAR(10) NOT NULL,
             consumo DECIMAL(10,2) NOT NULL,
@@ -29,16 +40,3 @@ def init_db(conn):
             FOREIGN KEY (cp) REFERENCES CP(idCP)
         )
     """)
-
-    conn.commit()
-
-def get_connection(db_host):
-    conn = mysql.connector.connect(
-        host=db_host,
-        user="root",
-        password="password",
-        database="EVCharging",
-        autocommit=True
-    )
-
-    return conn
