@@ -1,4 +1,4 @@
-# EV_CP_M.py - VERSIÓN COMPLETA
+# EV_CP_M.py
 import sys
 import json
 import time
@@ -148,26 +148,22 @@ def main():
                     fallo_prev = True
                 
                 # Enviar estado AVERIADO
-                status_msg = {"type": "status", "idCP": cp_id, "estado": "AVERIADO"}
-                send_to_central(status_msg)
+                health_msg = {"type": "health", "idCP": cp_id, "salud": "KO"}
+                send_to_central(health_msg)
                 
                 if engine_conectado_prev:
                     engine_conectado_prev = False
 
             # --- Si el Engine responde correctamente (OK) ---
             else:
+                # Enviar salud OK
+                health_msg = {"type": "health", "idCP": cp_id, "salud": "OK"}
+                send_to_central(health_msg)
+
                 if fallo_prev:
                     # Se recuperó de una avería
-                    health_msg = {"type": "health", "idCP": cp_id, "salud": "RECUPERADO"}
-                    if send_to_central(health_msg):
-                        print(f"[CP_MONITOR {cp_id}] ✅ ENGINE recuperado, notificado a CENTRAL")
+                    print(f"[CP_MONITOR {cp_id}] ✅ ENGINE recuperado, notificado a CENTRAL")
                     fallo_prev = False
-
-                # Enviar estado ACTIVADO y salud OK
-                status_msg = {"type": "status", "idCP": cp_id, "estado": "ACTIVADO"}
-                health_msg = {"type": "health", "idCP": cp_id, "salud": "OK"}
-                send_to_central(status_msg)
-                send_to_central(health_msg)
                 
                 if not engine_conectado_prev:
                     engine_conectado_prev = True

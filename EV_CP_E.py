@@ -26,7 +26,7 @@ def main():
     # --- CONSUMIDORES KAFKA ---
     # Autorizaciones de CENTRAL -> CP
     consumer_authorize = KafkaConsumer(
-        CP_AUTHORIZE_SUPPLY,
+        AUTHORIZE_SUPPLY,
         bootstrap_servers=broker,
         value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         group_id=f"cp_engine_{cp_id}",
@@ -126,21 +126,7 @@ def main():
         try:
             # Notificar cambio de estado a CENTRAL
             producer.send(CP_STATUS, {"idCP": cp_id, "estado": "SUMINISTRANDO"})
-            producer.flush()
-            
-            # Avisar al driver que hemos empezado
-            producer.send(DRIVER_SUPPLY_COMPLETE, {
-                "idCP": cp_id,
-                "ticket": {
-                    "idDriver": driver_id,
-                    "estado": "SUMINISTRANDO",
-                    "mensaje": f"Suministro iniciado en CP {cp_id}",
-                    "consumo_actual": 0.0,
-                    "importe_actual": 0.0
-                }
-            })
-            producer.flush()
-            
+            producer.flush()            
         except Exception as e:
             print(f"[ENGINE {cp_id}] ❌ Error enviando estado a CENTRAL: {e}")
 
@@ -159,23 +145,12 @@ def main():
                 driver_actual_envio = driver_id
 
             try:
-                # 1. Mandar consumo acumulado a CENTRAL
+                # 1. Mandar consumo acumulado a CENTRAL y a DRIVER
                 producer.send(CP_CONSUMPTION, {
                     "idCP": cp_id,
                     "consumo": consumo_actual_envio,
                     "importe": precio_actual_envio,
                     "conductor": driver_actual_envio
-                })
-
-                # 2. Mandar actualización a DRIVER
-                producer.send(DRIVER_SUPPLY_COMPLETE, {
-                    "idCP": cp_id,
-                    "ticket": {
-                        "idDriver": driver_actual_envio,
-                        "estado": "EN_PROGRESO",
-                        "consumo_actual": consumo_actual_envio,
-                        "importe_actual": precio_actual_envio
-                    }
                 })
 
                 producer.flush()
@@ -236,7 +211,8 @@ def main():
             
             producer.send(CP_SUPPLY_COMPLETE, {"idCP": cp_id, "ticket": ticket})
             producer.flush()
-            print(f"[ENGINE {cp_id}] ✅ SUMINISTRO FINALIZADO. Ticket enviado a Driver {current_driver_id}")
+
+            print(f"[ENGINE {cp_id}] ✅ SUMINISTRO FINALIZADO PARA CONDUCTOR {current_driver_id}")
             print(f"    Energía: {current_consumo_total} kWh")
             print(f"    Importe: {current_precio_total} €")
             print(f"[ENGINE {cp_id}] 🔄 Estado cambiado a ACTIVADO y notificado a CENTRAL")
@@ -289,10 +265,10 @@ def main():
             
             producer.send(CP_SUPPLY_COMPLETE, {"idCP": cp_id, "ticket": ticket})
             producer.flush()
+
             print(f"[ENGINE {cp_id}] ⚠️ SUMINISTRO INTERRUMPIDO POR AVERÍA!")
             print(f"    Consumo hasta el corte: {current_consumo_total} kWh")
             print(f"    Importe: {current_precio_total} €")
-            print(f"    Ticket de emergencia enviado a Driver {current_driver_id}")
             print(f"[ENGINE {cp_id}] 🔄 Estado cambiado a AVERIADO y notificado a CENTRAL")
         except Exception as e:
             print(f"[ENGINE {cp_id}] ❌ Error enviando ticket de emergencia a CENTRAL: {e}")
@@ -353,7 +329,6 @@ def main():
             print(f"[ENGINE {cp_id}] ⛔ SUMINISTRO CORTADO POR ORDEN DE CENTRAL!")
             print(f"    Consumo hasta el corte: {current_consumo_total} kWh")
             print(f"    Importe: {current_precio_total} €")
-            print(f"    Ticket enviado a Driver {current_driver_id}")
             print(f"[ENGINE {cp_id}] 🔄 Estado cambiado a PARADO y notificado a CENTRAL")
         except Exception as e:
             print(f"[ENGINE {cp_id}] ❌ Error enviando ticket forzado a CENTRAL: {e}")
@@ -377,9 +352,9 @@ def main():
             if str(event.get("idCP")) != cp_id:
                 continue
             
-            action = event.get("action")
+            authorize = event.get("authorize")
             
-            if action == "authorize":
+            if authorize == "YES":
                 with lock:
                     if estado_real == "ACTIVADO" and not en_suministro:
                         autorizado = True
@@ -396,7 +371,7 @@ def main():
                     else:
                         print(f"[ENGINE {cp_id}] ❌ Autorización rechazada: Estado {estado_real}")
                         
-            elif action == "reject":
+            elif authorize == "NO":
                 motivo = event.get("motivo", "DESCONOCIDO")
                 mensaje = event.get("mensaje", "Solicitud rechazada")
                 driver_rechazado = event.get("idDriver")
@@ -451,12 +426,6 @@ def main():
                         estado_real = "PARADO"
                         autorizado = False
                         driver_id = None
-                        try:
-                            producer.send(CP_STATUS, {"idCP": cp_id, "estado": "PARADO"})
-                            producer.flush()
-                            print(f"[ENGINE {cp_id}] 🔄 Notificado estado PARADO a CENTRAL")
-                        except Exception as e:
-                            print(f"[ENGINE {cp_id}] ❌ Error notificando PARADO a CENTRAL: {e}")
 
                 # Nota: no tocamos health_ok. No es avería física.
 
@@ -567,7 +536,7 @@ def main():
                     
                 print(f"[ENGINE {cp_id}] Enviando petición de suministro para driver {driver_id_input} (desde CP)")
                 try:
-                    producer.send(CHARGING_REQUESTS, {
+                    producer.send(SUPPLY_REQUEST_TO_CENTRAL, {
                         "idCP": cp_id, 
                         "idDriver": driver_id_input
                     })
