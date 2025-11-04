@@ -188,5 +188,5 @@ def main():
             pass
         print(f"[CP_MONITOR {cp_id}] ✅ Monitor finalizado correctamente")
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()
