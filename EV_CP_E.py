@@ -164,10 +164,14 @@ def main():
 
         # Si hemos salido porque health_ok se puso False (avería física durante la carga),
         # cerramos emergencia:
+        debo_cortar = False
         with lock:
             if not health_ok and en_suministro:
+                debo_cortar = True
                 print(f"[ENGINE {cp_id}] ⚠️ AVERÍA DETECTADA DURANTE SUMINISTRO!")
-                stop_supply_emergencia()
+                ###stop_supply_emergencia()
+        if debo_cortar:
+            stop_supply_emergencia()
     
 
     def stop_supply():
@@ -321,10 +325,12 @@ def main():
             # Informar a CENTRAL que quedamos PARADO
             producer.send(CP_STATUS, {"idCP": cp_id, "estado": "PARADO"})
             producer.flush()
+            print("[DEB] Mandado PARADO a CP_STATUS")
 
             # Enviar ticket parcial igual que en emergencia
             producer.send(CP_SUPPLY_COMPLETE, {"idCP": cp_id, "ticket": ticket})
             producer.flush()
+            print("[DEB] Mandado ticket a CP_SUPPLY_COMPLETE")
 
             print(f"[ENGINE {cp_id}] ⛔ SUMINISTRO CORTADO POR ORDEN DE CENTRAL!")
             print(f"    Consumo hasta el corte: {current_consumo_total} kWh")
@@ -408,10 +414,12 @@ def main():
 
             # === ORDEN PARAR ==================================================
             if accion == "PARAR":
+                ejecutar_corte = False
                 with lock:
                     print(f"\n[ENGINE {cp_id}] ⛔ ORDEN CENTRAL: PARAR")
 
                     if en_suministro:
+                        ejecutar_corte = True
                         print(f"[ENGINE {cp_id}] ⛔ Cortando suministro activo por orden CENTRAL...")
                         # Esta llamada:
                         #   - marca en_suministro = False
@@ -419,13 +427,18 @@ def main():
                         #   - envía ticket parcial
                         #   - notifica CP_STATUS = PARADO
                         #   - limpia autorizado / driver_id
-                        stop_supply_forzado_por_central()
+                        #####stop_supply_forzado_por_central()
                     else:
                         # No estábamos suministrando: sólo pasamos a PARADO aquí
                         estado = "PARADO"
                         estado_real = "PARADO"
                         autorizado = False
                         driver_id = None
+                if ejecutar_corte:
+                    stop_supply_forzado_por_central()
+                    # y ahora avisamos a Central de que este CP está PARADO
+                    producer.send(CP_STATUS, {"idCP": cp_id, "estado": "PARADO"})
+                    producer.flush()        
 
                 # Nota: no tocamos health_ok. No es avería física.
 
