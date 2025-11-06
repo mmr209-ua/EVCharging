@@ -317,8 +317,12 @@ class EVDriverApp:
 
         self.log("Suministros finalizados.")
 
-    # Solicitar suministro a Central para un CP concreto del fichero
+    # Solicitar suministro a Central para un CP concreto
     def enviar_solicitud(self, cp_id):
+        if not self.producer.bootstrap_connected():
+            self.log("Imposible conectar con la CENTRAL.")
+            return
+
         try:
             request = {"idDriver": self.driver_id, "idCP": cp_id}
             self.producer.send(SUPPLY_REQUEST_TO_CENTRAL, request)

@@ -199,12 +199,11 @@ def procesar_peticion_suministro(event, conn, producer):
     
     # Si el CP no se encuentra disponible, rechazar petición
     else:
-        safe_log(f"[CENTRAL] CP {id_cp} NO DISPONIBLE (estado: {estado}).")
         try:
             payload_cp = {"idCP": id_cp, "idDriver": id_driver, "authorize": "NO"}
             producer.send(AUTHORIZE_SUPPLY, payload_cp)
             producer.flush()
-            safe_log(f"[CENTRAL] CP {id_cp} disponible; permiso para comenzar el suministro DENEGADO")
+            safe_log(f"[CENTRAL] CP {id_cp} NO disponible; permiso para comenzar el suministro DENEGADO")
         except Exception as e:
             safe_log(f"[CENTRAL] Error enviando autorización CP: {e}")
 
@@ -271,7 +270,7 @@ def enviar_historial_driver(event, producer):
         payload = registros if registros else []
         producer.send(SUMINISTROS_COMPLETADOS, payload)
         producer.flush()
-        safe_log(f"[CENTRAL] Historial enviado a Driver {id_driver} ({len(payload)} registros)")
+        safe_log(f"[CENTRAL] Historial enviado a Driver {id_driver}")
     except Exception as e:
         safe_log(f"[CENTRAL] Error enviando historial a Driver {id_driver}: {e}")
 
