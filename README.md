@@ -15,6 +15,6 @@ pip install kafka-python
 bin\windows\kafka-server-start.bat .\config\server.properties
 
 ## 4. Ejecutar los archivos .bat (dándole doble click) en el siguiente orden
-run_central.bat
-run_cp.bat
-run_driver.bat
+- run_central.bat
+- run_cp.bat
+- run_driver.bat
