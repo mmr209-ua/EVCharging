@@ -8,9 +8,9 @@ echo ==========================================
 echo.
 
 REM ==== CONFIGURACION GENERAL ====
-set BROKER=127.0.0.1:9092
+set BROKER=192.168.24.1:9092
 set CENTRAL_PORT=9098
-set DB_HOST=127.0.0.1
+set DB_HOST=192.168.24.1
 
 REM ==== CONFIGURACION DE CPs ====
 set CP1_ID=1

@@ -258,7 +258,7 @@ def main():
                 "hora_fin": hora_fin,
                 "idCP": cp_id,
                 "idDriver": current_driver_id,
-                "motivo": "INTERRUMPIDO_POR_AVERIA",
+                "motivo": "AVERIADO",
                 "estado": "INTERRUMPIDO",
                 "mensaje": f"Suministro interrumpido por avería. Consumo hasta el momento: {current_consumo_total} kWh / {current_precio_total} €"
             }
@@ -316,7 +316,7 @@ def main():
                 "hora_fin": hora_fin,
                 "idCP": cp_id,
                 "idDriver": current_driver_id,
-                "motivo": "INTERRUMPIDO_POR_ORDEN_CENTRAL",
+                "motivo": "PARADO",
                 "estado": "INTERRUMPIDO",
                 "mensaje": f"Suministro interrumpido por orden de la central. Consumo hasta el momento: {current_consumo_total} kWh / {current_precio_total} €"
             }

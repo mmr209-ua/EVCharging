@@ -1,5 +1,4 @@
 import sys
-import os
 import threading
 import json
 import time
@@ -33,8 +32,15 @@ COLORS = {
 # Mostrar logs en la GUI
 def safe_log(msg: str):
     global gui_instance
-    if gui_instance is not None:
-        gui_instance.log(msg)
+    try:
+        if gui_instance is not None and hasattr(gui_instance, "log_text") and gui_instance.log_text.winfo_exists():
+            gui_instance.log(msg)
+        else:
+            print(msg)  # fallback a consola si la GUI ya está cerrada
+    except Exception:
+        # Evitar cualquier error si la GUI ya fue destruida
+        print(msg)
+
 
 # ======================================================================
 # Utilidades BD (SQLite)
@@ -77,7 +83,7 @@ def inicializar_estado_cps():
             cur = conn.cursor()
             cur.execute("UPDATE CP SET estado = 'DESCONECTADO'")
             conn.commit()
-            safe_log("[CENTRAL] Todos los CPs marcados como DESCONECTADOS al iniciar.")
+            safe_log("[CENTRAL] Todos los CPs marcados como DESCONECTADOS al iniciar")
         actualizar_pantalla.set()  # Forzamos un refresco inicial de la GUI
     except sqlite3.Error as e:
         safe_log(f"[CENTRAL] [BBDD] Error inicializando estados de CPs: {e}")
@@ -108,6 +114,8 @@ def consume_loop(topic, producer, consumer):
                             enviar_ticket(event, conn, producer)
                         elif topic == SUPPLY_REQUEST_TO_CENTRAL:
                             procesar_peticion_suministro(event, conn, producer)
+                        elif topic == SUPPLY_HISTORY:
+                            enviar_historial_driver(event, producer)
                     except Exception as e:
                         safe_log(f"[CENTRAL] Excepción tramitando topic {topic}: {e}")
     except Exception as e:
@@ -165,7 +173,7 @@ def procesar_peticion_suministro(event, conn, producer):
     
     # Si no se encuentra el CP en la BD, mandar noti al conductor
     if row is None:
-        safe_log(f"[CENTRAL] ERROR: CP {id_cp} no está registrado en la BD.")
+        safe_log(f"[CENTRAL] ERROR: CP {id_cp} no está registrado en la BD")
         if id_driver is not None:
             try:
                 payload_cp = {"idCP": id_cp, "idDriver": id_driver, "authorize": "NO"}
@@ -174,7 +182,6 @@ def procesar_peticion_suministro(event, conn, producer):
             except Exception as e:
                 safe_log(f"[CENTRAL] Error notificando al driver que el CP no existe: {e}")
         return
-
 
     # Obtener estado del CP
     estado = row[0]
@@ -186,7 +193,7 @@ def procesar_peticion_suministro(event, conn, producer):
                 payload_cp = {"idCP": id_cp, "idDriver": id_driver, "authorize": "YES"}
                 producer.send(AUTHORIZE_SUPPLY, payload_cp)
                 producer.flush()
-                safe_log(f"[CENTRAL] CP {id_cp} disponible. Permiso para comenzar el suministro CONCEDIDO.")
+                safe_log(f"[CENTRAL] CP {id_cp} disponible; permiso para comenzar el suministro CONCEDIDO")
             except Exception as e:
                 safe_log(f"[CENTRAL] Error enviando autorización CP: {e}")
     
@@ -197,7 +204,7 @@ def procesar_peticion_suministro(event, conn, producer):
             payload_cp = {"idCP": id_cp, "idDriver": id_driver, "authorize": "NO"}
             producer.send(AUTHORIZE_SUPPLY, payload_cp)
             producer.flush()
-            safe_log(f"[CENTRAL] CP {id_cp} disponible. Permiso para comenzar el suministro DENEGADO.")
+            safe_log(f"[CENTRAL] CP {id_cp} disponible; permiso para comenzar el suministro DENEGADO")
         except Exception as e:
             safe_log(f"[CENTRAL] Error enviando autorización CP: {e}")
 
@@ -206,53 +213,72 @@ def procesar_peticion_suministro(event, conn, producer):
 def enviar_ticket(event, conn, producer):
     id_cp = str(event.get("idCP"))
     ticket = event.get("ticket", {})
+    estado = str(ticket.get("estado", ""))
+
+    # Mandar ticket el driver
     try:
         producer.send(DRIVER_SUPPLY_COMPLETE, {"ticket": ticket})
         producer.flush()
-        safe_log(f"[CENTRAL] Suministro finalizado CP {id_cp}, ticket reenviado al Driver.")
+        safe_log(f"[CENTRAL] Suministro finalizado CP {id_cp}, ticket reenviado al Driver")
     except Exception as e:
         safe_log(f"[CENTRAL] Error reenviando ticket al Driver: {e}")
 
-    cur = conn.cursor()
-    cur.execute("UPDATE CP SET estado = ? WHERE idCP = ?", ("ACTIVADO", id_cp))
-    conn.commit()
+    # Guardar el ticket en la BD
+    try:
+        conductor = int(ticket.get("idDriver", 0))
+        energia = float(ticket.get("energia", 0))
+        importe = float(ticket.get("precio_total", 0))
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO CONSUMO (conductor, cp, consumo, importe, estado)
+            VALUES (?, ?, ?, ?, ?)
+        """, (conductor, id_cp, energia, importe, estado))
+        conn.commit()
+        safe_log(f"[CENTRAL] Guardado suministro completado en BD: CP {id_cp}, Conductor {conductor}.")
+    except Exception as e:
+        safe_log(f"[CENTRAL][BBDD] Error guardando consumo: {e}")
+
+    # Si el suministro se ha completado con éxito, marcar el CP como activado de nuevo
+    if (estado == "COMPLETADO"):
+        cur = conn.cursor()
+        cur.execute("UPDATE CP SET estado = ? WHERE idCP = ?", ("ACTIVADO", id_cp))
+        conn.commit()
+        
+    # Borrar los datos de consumo del dict
     CP_CONSUMPTION_DATA.pop(id_cp, None)
     actualizar_pantalla.set()
+
+# Mandar una lista al driver solicitante con los suministros completados
+def enviar_historial_driver(event, producer):
+    id_driver = str(event.get("idDriver"))
+    if not id_driver:
+        safe_log("[CENTRAL] SUPPLY_HISTORY recibido sin idDriver")
+        return
+
+    try:
+        with sqlite3.connect(BBDD) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT conductor, cp, consumo, importe, estado
+                FROM CONSUMO
+                WHERE conductor = ?
+                ORDER BY timestamp DESC
+            """, (id_driver,))
+            registros = [
+                {"idDriver": r[0], "idCP": r[1], "energia": r[2], "importe": r[3], "estado": r[4]}
+                for r in cur.fetchall()
+            ]
+        payload = registros if registros else []
+        producer.send(SUMINISTROS_COMPLETADOS, payload)
+        producer.flush()
+        safe_log(f"[CENTRAL] Historial enviado a Driver {id_driver} ({len(payload)} registros)")
+    except Exception as e:
+        safe_log(f"[CENTRAL] Error enviando historial a Driver {id_driver}: {e}")
+
 
 # ======================================================================
 # Lógica de negocio con SOCKETS
 # ======================================================================
-
-'''
-def tcp_server(listen_port, producer):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(("0.0.0.0", int(listen_port)))
-    s.listen(8)
-    safe_log(f"[CENTRAL] Servidor TCP escuchando en puerto {listen_port}")
-
-    try:
-        while not stop_event.is_set():
-            try:
-                s.settimeout(1.0)
-                conn_sock, addr = s.accept()
-            except socket.timeout:
-                continue
-            except Exception as e:
-                safe_log(f"[CENTRAL][TCP] Error aceptando conexión: {e}")
-                continue
-
-            threading.Thread(
-                target=handle_tcp_client,
-                args=(conn_sock, addr, producer),
-                daemon=True,
-            ).start()
-    finally:
-        try:
-            s.close()
-        except Exception:
-            pass
-'''
 
 # Servidor TCP para la comunicación entre Central y los distintos CPs
 def tcp_server(listen_port, producer):
@@ -296,7 +322,7 @@ def handle_tcp_client(socket_conn, addr, producer):
                 if msg_type == "register":
                     registrar_CP(msg, db_conn)
                 elif msg_type == "alert":
-                    safe_log(f"[CENTRAL][TCP] ALERTA de {msg.get('idCP')}: {msg.get('alerta')}")
+                    safe_log(f"[CENTRAL][TCP] ALERTA de MONITOR {msg.get('idCP')}: {msg.get('alerta')}")
                 elif msg_type == "health":
                     comprobar_salud_CP({"idCP": msg.get("idCP"), "salud": msg.get("salud")}, db_conn)
             except Exception as e:
@@ -364,6 +390,7 @@ def comprobar_salud_CP(event, conn):
 # Enviar lista de CPs disponibles a los Drivers
 # ======================================================================
 
+# Mandar una lista a driver con los CPs disponibles
 def enviar_lista_cps_disponibles(producer):
     while not stop_event.is_set():
         try:
@@ -382,6 +409,7 @@ def enviar_lista_cps_disponibles(producer):
 # ======================================================================
 
 class CentralGUI(tk.Tk):
+
     # INICIALIZAR INTERFAZ
     def __init__(self, producer):
         super().__init__()
@@ -416,6 +444,10 @@ class CentralGUI(tk.Tk):
 
         # De-seleccionar cualquier fila si se clica fuera de los items
         self.tree.bind("<Button-1>", self.click_fuera)
+
+        # Interceptar el cierre de la ventana (botón X)
+        self.protocol("WM_DELETE_WINDOW", self.salir)
+
 
     # MOSTRAR MENSAJES DE LOG
     def log(self, msg):
@@ -476,6 +508,11 @@ class CentralGUI(tk.Tk):
             importe = consumo.get("importe", None)
             conductor = consumo.get("conductor", "")
 
+            # Añadir leyenda si el CP está PARADO
+            estado_display = estado
+            if estado == "PARADO":
+                estado_display += " (Fuera de servicio)"
+
             # Solo mostrar consumo e importe si el CP está suministrando
             if estado == "SUMINISTRANDO" and kwh is not None and importe is not None:
                 kwh_display = f"{kwh:.2f}"
@@ -485,7 +522,7 @@ class CentralGUI(tk.Tk):
                 importe_display = ""
 
             iid = self.tree.insert("", tk.END,
-                values=(idCP, estado, precio, ubicacion, kwh_display, importe_display, conductor))
+                values=(idCP, estado_display, precio, ubicacion, kwh_display, importe_display, conductor))
 
             # Generar items
             bg = COLORS.get(estado, COLORS["DESCONECTADO"])
@@ -510,7 +547,6 @@ class CentralGUI(tk.Tk):
             self.log("[CENTRAL][GUI] Selecciona un CP primero.")
             return
         try:
-            # Marca en BD (opcional; se actualizará asimismo por el CP/central)
             with sqlite3.connect(BBDD) as conn:
                 db_execute(conn, "UPDATE CP SET estado = ? WHERE idCP = ?", ("PARADO", id_cp))
             self.producer.send(CP_CONTROL, {"accion": "PARAR", "idCP": id_cp})
@@ -562,14 +598,27 @@ class CentralGUI(tk.Tk):
 
     # ORDEN: desconectar Central
     def salir(self):
-        stop_event.set()
-        self.log("[CENTRAL] Cerrando aplicación...")
-        self.after(300, self.destroy)
+        try:
+            stop_event.set()
+            self.log("[CENTRAL] Cerrando aplicación...")
+
+            # Cerrar el productor Kafka de forma segura
+            try:
+                self.producer.flush()
+                self.producer.close()
+            except Exception:
+                pass
+
+            # Destruir ventana después de breve pausa
+            self.after(300, self.destroy)
+        except Exception:
+            # Evita excepciones si ya se cerró
+            pass
+
 
 # ======================================================================
 # Main
 # ======================================================================
-
 def main():
     if len(sys.argv) < 4:
         print("Uso: py EV_Central.py <puerto_tcp> <broker_ip:puerto> <db_ip>")
@@ -578,6 +627,11 @@ def main():
     listen_port = sys.argv[1]
     broker = sys.argv[2]
     db_host = sys.argv[3]   # Este parametro no es necesario con SQLite
+
+    # Habilitar acceso concurrente sin bloqueos entre los hilos de lectura y escritura.
+    with sqlite3.connect(BBDD) as conn:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.commit()
 
     # Producer Kafka
     producer = KafkaProducer(
@@ -611,19 +665,19 @@ def main():
             enable_auto_commit=True,
             auto_offset_reset='earliest',
         ),
-        SUPPLY_REQUEST_VIA_CP: KafkaConsumer(
-            SUPPLY_REQUEST_VIA_CP,
-            bootstrap_servers=[broker],
-            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id="central_supply_request_via_cp",
-            enable_auto_commit=True,
-            auto_offset_reset='earliest',
-        ),
         SUPPLY_REQUEST_TO_CENTRAL: KafkaConsumer(
             SUPPLY_REQUEST_TO_CENTRAL,
             bootstrap_servers=[broker],
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
             group_id="central_supply_request_from_driver",
+            enable_auto_commit=True,
+            auto_offset_reset='earliest',
+        ),
+        SUPPLY_HISTORY: KafkaConsumer(
+            SUPPLY_HISTORY,
+            bootstrap_servers=[broker],
+            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+            group_id="central_supply_history_request",
             enable_auto_commit=True,
             auto_offset_reset='earliest',
         ),
@@ -669,8 +723,8 @@ def main():
         except Exception:
             pass
 
-        safe_log("[CENTRAL] Recursos cerrados. Hasta luego.")
+        safe_log("[CENTRAL] Recursos cerrados. Hasta luego")
 
-# 
+#
 if __name__ == "__main__":
     main()

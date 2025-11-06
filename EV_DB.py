@@ -33,6 +33,7 @@ with sqlite3.connect(BBDD) as conn:
             idConsumo INTEGER PRIMARY KEY AUTOINCREMENT,
             conductor INT NOT NULL,
             cp VARCHAR(10) NOT NULL,
+            estado TEXT NOT NULL CHECK (estado IN ('COMPLETADO','INTERRUMPIDO')),
             consumo DECIMAL(10,2) NOT NULL,
             importe DECIMAL(10,2) NOT NULL,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
