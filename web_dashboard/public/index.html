@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EVCharging Dashboard - Release 2</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>EVCharging Dashboard</h1>
+        <div class="status-bar">
+            <span id="connection-status" class="status-indicator disconnected">Desconectado</span>
+            <span id="last-update">Ultima actualizacion: --</span>
+        </div>
+    </header>
+
+    <nav>
+        <button class="nav-btn active" data-tab="cps">Charging Points</button>
+        <button class="nav-btn" data-tab="transactions">Transacciones</button>
+        <button class="nav-btn" data-tab="weather">Clima</button>
+        <button class="nav-btn" data-tab="audit">Auditoria</button>
+    </nav>
+
+    <main>
+        <!-- Panel de Charging Points -->
+        <section id="cps-tab" class="tab-content active">
+            <h2>Estado de Charging Points</h2>
+            <div class="summary-cards">
+                <div class="card">
+                    <span class="card-value" id="total-cps">0</span>
+                    <span class="card-label">Total CPs</span>
+                </div>
+                <div class="card card-green">
+                    <span class="card-value" id="active-cps">0</span>
+                    <span class="card-label">Activos</span>
+                </div>
+                <div class="card card-blue">
+                    <span class="card-value" id="charging-cps">0</span>
+                    <span class="card-label">Suministrando</span>
+                </div>
+                <div class="card card-orange">
+                    <span class="card-value" id="paused-cps">0</span>
+                    <span class="card-label">Pausados (Clima)</span>
+                </div>
+            </div>
+            <table id="cps-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Estado</th>
+                        <th>Precio (EUR/kWh)</th>
+                        <th>Ubicacion</th>
+                        <th>Autenticado</th>
+                        <th>Clima</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Filas dinamicas -->
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Panel de Transacciones -->
+        <section id="transactions-tab" class="tab-content">
+            <h2>Ultimas Transacciones</h2>
+            <table id="transactions-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Conductor</th>
+                        <th>CP</th>
+                        <th>Estado</th>
+                        <th>Consumo (kWh)</th>
+                        <th>Importe (EUR)</th>
+                        <th>Fecha/Hora</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Filas dinamicas -->
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Panel de Clima -->
+        <section id="weather-tab" class="tab-content">
+            <h2>Estado del Clima por Ubicacion</h2>
+            <div class="weather-cards" id="weather-cards">
+                <!-- Cards dinamicas -->
+            </div>
+        </section>
+
+        <!-- Panel de Auditoria -->
+        <section id="audit-tab" class="tab-content">
+            <h2>Log de Auditoria</h2>
+            <table id="audit-table">
+                <thead>
+                    <tr>
+                        <th>Fecha/Hora</th>
+                        <th>Tipo</th>
+                        <th>Origen</th>
+                        <th>Accion</th>
+                        <th>Resultado</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Filas dinamicas -->
+                </tbody>
+            </table>
+        </section>
+    </main>
+
+    <footer>
+        <p>EVCharging System - Release 2 | Sistemas Distribuidos 2024-2025</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

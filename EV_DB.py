@@ -1,4 +1,4 @@
-#EV_DB   
+#EV_DB
 import sqlite3
 
 BBDD = "Base_Datos.sqlite"
@@ -15,14 +15,38 @@ with sqlite3.connect(BBDD) as conn:
 
     cursor = conn.cursor()
 
+    # Tabla de Puntos de Recarga (CP) - Release 2
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS CP (
             idCP VARCHAR(10) PRIMARY KEY,
             estado TEXT NOT NULL CHECK (estado IN ('ACTIVADO','PARADO','SUMINISTRANDO','AVERIADO','DESCONECTADO')),
             precio DECIMAL(10,2) NOT NULL,
-            ubicacion VARCHAR(100) NOT NULL
+            ubicacion VARCHAR(100) NOT NULL,
+            auth_token TEXT,
+            encryption_key TEXT,
+            authenticated BOOLEAN DEFAULT 0,
+            paused_by_weather BOOLEAN DEFAULT 0
         );
     """)
+
+    # Migrar tabla existente si faltan columnas (para compatibilidad)
+    try:
+        cursor.execute("ALTER TABLE CP ADD COLUMN auth_token TEXT")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE CP ADD COLUMN encryption_key TEXT")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE CP ADD COLUMN authenticated BOOLEAN DEFAULT 0")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE CP ADD COLUMN paused_by_weather BOOLEAN DEFAULT 0")
+    except:
+        pass
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS CONDUCTOR (
             idConductor INTEGER PRIMARY KEY AUTOINCREMENT
@@ -41,3 +65,31 @@ with sqlite3.connect(BBDD) as conn:
             FOREIGN KEY (cp) REFERENCES CP(idCP)
         )
     """)
+
+    # Tabla de Auditoria - Release 2
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS AUDIT_LOG (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            event_type TEXT NOT NULL,
+            source_ip TEXT,
+            source_id TEXT,
+            action TEXT NOT NULL,
+            parameters TEXT,
+            result TEXT
+        )
+    """)
+
+    # Tabla de Alertas Climaticas - Release 2
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS WEATHER_ALERTS (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ubicacion VARCHAR(100) NOT NULL,
+            temperatura DECIMAL(5,2),
+            alert_active BOOLEAN
+        )
+    """)
+
+    conn.commit()
+    print("Tablas creadas/actualizadas correctamente")
