@@ -10,6 +10,13 @@ import urllib3
 # Desactivar warnings de SSL para certificados autofirmados
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Importar modulo de cifrado (Release 2)
+try:
+    from crypto_utils import encrypt_message
+except ImportError:
+    print("[CP_MONITOR] ADVERTENCIA: crypto_utils no encontrado, cifrado deshabilitado")
+    encrypt_message = None
+
 # Archivo de configuracion local del CP
 CONFIG_FILE = "cp_config.json"
 
@@ -69,9 +76,23 @@ def main():
     def send_to_central(msg):
         nonlocal central_socket
         max_retries = 3
+
+        # Cifrar mensaje si tenemos clave de cifrado
+        encryption_key = config.get("encryption_key")
+        if encryption_key and encrypt_message:
+            try:
+                encrypted_data = encrypt_message(encryption_key, msg)
+                # Enviar mensaje cifrado con idCP para que Central pueda identificar la clave
+                msg_to_send = {"encrypted": encrypted_data, "idCP": cp_id}
+            except Exception as e:
+                print(f"[CP_MONITOR {cp_id}] Error cifrando mensaje: {e}")
+                msg_to_send = msg  # Fallback sin cifrar
+        else:
+            msg_to_send = msg
+
         for attempt in range(max_retries):
             try:
-                central_socket.sendall((json.dumps(msg) + "\n").encode("utf-8"))
+                central_socket.sendall((json.dumps(msg_to_send) + "\n").encode("utf-8"))
                 return True
             except Exception as e:
                 print(f"[CP_MONITOR {cp_id}] Error enviando a CENTRAL (intento {attempt+1}/{max_retries}): {e}")
@@ -153,13 +174,13 @@ def main():
             return False
 
     def autenticar_en_central():
-        """Autentica el CP en Central usando el authToken del Registry via API REST."""
+        """Autentica el CP en Central comprobando que existe en la BD via API REST."""
         nonlocal config, central_socket, central_connected
         import requests
 
-        auth_token = config.get("authToken")
-        if not auth_token:
-            print(f"[CP_MONITOR {cp_id}] Error: No hay authToken. Registrese primero (opcion 1)")
+        # Verificar que esta registrado
+        if not config.get("authToken"):
+            print(f"[CP_MONITOR {cp_id}] Error: No esta registrado. Registrese primero (opcion 1)")
             return False
 
         # URL de API_Central (puerto 5002 en el mismo host que Central)
@@ -169,8 +190,7 @@ def main():
 
         try:
             data = {
-                "idCP": cp_id,
-                "authToken": auth_token
+                "idCP": cp_id
             }
             response = requests.post(
                 f"{api_url}/authenticate",

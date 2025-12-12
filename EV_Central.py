@@ -36,6 +36,7 @@ COLORS = {
     "PARADO": "#FFA500",
     "AVERIADO": "#FF0000",
     "DESCONECTADO": "#9E9B9B",
+    "DESACTIVADO": "#8B0000",  # Rojo oscuro - fuera de servicio
 }
 
 def safe_log(msg: str):
@@ -398,6 +399,23 @@ def handle_tcp_client(socket_conn, addr, producer):
                 safe_log(f"[CENTRAL][TCP] JSON invalido desde {addr}: {line}")
                 continue
 
+            # Descifrar mensaje si viene cifrado
+            if 'encrypted' in msg:
+                id_cp = msg.get('idCP')
+                if id_cp:
+                    try:
+                        cur = db_conn.cursor()
+                        cur.execute("SELECT encryption_key, authenticated FROM CP WHERE idCP=?", (id_cp,))
+                        row = cur.fetchone()
+                        if row and row[0] and row[1]:
+                            msg = decrypt_message(row[0], msg['encrypted'])
+                        else:
+                            safe_log(f"[CENTRAL][TCP] CP {id_cp} no autenticado, mensaje ignorado")
+                            continue
+                    except Exception as e:
+                        safe_log(f"[CENTRAL][TCP] Error descifrando mensaje de CP {id_cp}: {e}")
+                        continue
+
             msg_type = msg.get("type")
             id_cp_asociado = msg.get("idCP", id_cp_asociado)
 
@@ -714,22 +732,23 @@ class CentralGUI(tk.Tk):
             self.log(f"[CENTRAL][GUI] Error REANUDAR TODOS: {e}")
 
     def restaurar_claves(self):
-        """Revoca todas las claves de cifrado y fuerza re-autenticacion."""
+        """Revoca todas las claves de cifrado, desactiva los CPs y fuerza re-autenticacion."""
         confirm = messagebox.askyesno(
             "Confirmar",
-            "Esto revocara todas las claves de cifrado.\nLos CPs deberan re-autenticarse.\n\nContinuar?"
+            "Esto revocara todas las claves de cifrado.\nLos CPs quedaran DESACTIVADOS y deberan re-autenticarse.\n\nContinuar?"
         )
         if not confirm:
             return
 
         try:
             with sqlite3.connect(BBDD) as conn:
-                conn.execute("UPDATE CP SET encryption_key = NULL, authenticated = 0")
+                conn.execute("UPDATE CP SET encryption_key = NULL, authenticated = 0, estado = 'DESACTIVADO'")
                 conn.commit()
 
-            log_audit('SECURITY', 'localhost', 'CENTRAL', 'REVOKE_KEYS', {'action': 'Revoke all encryption keys'}, 'SUCCESS')
+            log_audit('SECURITY', 'localhost', 'CENTRAL', 'REVOKE_KEYS', {'action': 'Revoke all encryption keys, CPs desactivados'}, 'SUCCESS')
 
             self.log("[CENTRAL] Todas las claves de cifrado REVOCADAS")
+            self.log("[CENTRAL] Todos los CPs DESACTIVADOS")
             self.log("[CENTRAL] Los CPs deben re-autenticarse para volver a operar")
             actualizar_pantalla.set()
         except Exception as e:

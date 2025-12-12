@@ -294,13 +294,12 @@ def health_check():
 @app.route('/authenticate', methods=['POST'])
 def authenticate_cp():
     """
-    Autentica un CP usando el auth_token del Registry.
-    Si es valido, genera y devuelve una encryption_key unica.
+    Autentica un CP comprobando que existe en la base de datos.
+    Si existe, genera y devuelve una encryption_key unica.
 
     Request JSON:
     {
-        "idCP": "1",
-        "authToken": "uuid-token..."
+        "idCP": "1"
     }
 
     Response JSON (exito):
@@ -320,16 +319,15 @@ def authenticate_cp():
         return jsonify({"success": False, "error": "Datos requeridos"}), 400
 
     id_cp = str(data.get("idCP", ""))
-    auth_token = data.get("authToken", "")
 
-    if not id_cp or not auth_token:
-        return jsonify({"success": False, "error": "idCP y authToken son requeridos"}), 400
+    if not id_cp:
+        return jsonify({"success": False, "error": "idCP es requerido"}), 400
 
     print(f"[API_CENTRAL] Intento de autenticacion de CP {id_cp}")
 
     try:
-        # Verificar que el CP existe y tiene el token correcto
-        rows = db_fetchall("SELECT auth_token, authenticated FROM CP WHERE idCP = ?", (id_cp,))
+        # Verificar que el CP existe en la base de datos
+        rows = db_fetchall("SELECT idCP FROM CP WHERE idCP = ?", (id_cp,))
 
         if not rows:
             print(f"[API_CENTRAL] CP {id_cp} no registrado en Registry")
@@ -338,16 +336,6 @@ def authenticate_cp():
                 VALUES (?, ?, ?, ?, ?, ?)
             """, ('AUTH', request.remote_addr, id_cp, 'AUTHENTICATE', json.dumps({'reason': 'CP not registered'}), 'FAILED'))
             return jsonify({"success": False, "error": "CP no registrado. Registrese primero en Registry."}), 404
-
-        stored_token = rows[0]["auth_token"]
-
-        if stored_token != auth_token:
-            print(f"[API_CENTRAL] Token invalido para CP {id_cp}")
-            db_execute("""
-                INSERT INTO AUDIT_LOG (event_type, source_ip, source_id, action, parameters, result)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, ('AUTH', request.remote_addr, id_cp, 'AUTHENTICATE', json.dumps({'reason': 'Invalid token'}), 'FAILED'))
-            return jsonify({"success": False, "error": "Token de autenticacion invalido"}), 401
 
         # Generar clave de cifrado unica
         encryption_key = generate_encryption_key()
