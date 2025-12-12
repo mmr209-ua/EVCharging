@@ -14,6 +14,35 @@ except ImportError:
     generate_encryption_key = lambda: "dummy_key"
 
 app = Flask(__name__)
+
+# ======================================================================
+# SISTEMA DE AUDITORIA
+# ======================================================================
+
+def log_audit(event_type: str, source_ip: str, source_id: str, action: str, parameters: dict, result: str):
+    """
+    Registra evento en tabla AUDIT_LOG.
+
+    Args:
+        event_type: 'AUTH', 'WEATHER_ALERT', 'CONTROL_ORDER', etc.
+        source_ip: IP del cliente
+        source_id: idCP, idDriver o identificador
+        action: Descripcion de la accion
+        parameters: Dict con detalles del evento
+        result: 'SUCCESS', 'FAILED', 'PENDING'
+    """
+    try:
+        with sqlite3.connect(BBDD) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO AUDIT_LOG (event_type, source_ip, source_id, action, parameters, result)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (event_type, source_ip, source_id, action, json.dumps(parameters), result))
+            conn.commit()
+            print(f"[API_CENTRAL][AUDIT] {event_type} | {source_ip} | {source_id} | {action} | {result}")
+    except Exception as e:
+        print(f"[API_CENTRAL][AUDIT] Error registrando evento: {e}")
+
 CORS(app)  # Permitir CORS para el Front Web
 
 BBDD = "Base_Datos.sqlite"
@@ -230,17 +259,9 @@ def weather_alert():
             print(f"[API_CENTRAL] Alerta CANCELADA para {ubicacion}: {temperatura}C, CPs reanudados: {len(affected_cps)}")
 
         # Registrar en auditoria
-        db_execute("""
-            INSERT INTO AUDIT_LOG (event_type, source_ip, source_id, action, parameters, result)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            'WEATHER_ALERT',
-            request.remote_addr,
-            'EV_W',
-            'ALERT_RECEIVED' if alert else 'ALERT_CANCELLED',
-            json.dumps({"ubicacion": ubicacion, "temperatura": temperatura}),
-            'SUCCESS'
-        ))
+        log_audit('WEATHER_ALERT', request.remote_addr, 'EV_W',
+                 'ALERT_ACTIVATED' if alert else 'ALERT_CANCELLED',
+                 {'ubicacion': ubicacion, 'temperatura': temperatura, 'cps_afectados': len(affected_cps)}, 'SUCCESS')
 
         return jsonify({
             "success": True,
@@ -250,6 +271,8 @@ def weather_alert():
 
     except Exception as e:
         print(f"[API_CENTRAL] Error procesando alerta: {e}")
+        log_audit('WEATHER_ALERT', request.remote_addr, 'EV_W', 'ALERT_ERROR',
+                 {'error': str(e)}, 'FAILED')
         return jsonify({"error": True, "message": str(e)}), 500
 
 @app.route('/audit', methods=['GET'])
@@ -331,10 +354,8 @@ def authenticate_cp():
 
         if not rows:
             print(f"[API_CENTRAL] CP {id_cp} no registrado en Registry")
-            db_execute("""
-                INSERT INTO AUDIT_LOG (event_type, source_ip, source_id, action, parameters, result)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, ('AUTH', request.remote_addr, id_cp, 'AUTHENTICATE', json.dumps({'reason': 'CP not registered'}), 'FAILED'))
+            log_audit('AUTH', request.remote_addr, id_cp, 'AUTH_FAILED',
+                     {'reason': 'CP not registered'}, 'FAILED')
             return jsonify({"success": False, "error": "CP no registrado. Registrese primero en Registry."}), 404
 
         # Generar clave de cifrado unica
@@ -347,15 +368,15 @@ def authenticate_cp():
         """, (encryption_key, id_cp))
 
         print(f"[API_CENTRAL] CP {id_cp} AUTENTICADO correctamente")
-        db_execute("""
-            INSERT INTO AUDIT_LOG (event_type, source_ip, source_id, action, parameters, result)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, ('AUTH', request.remote_addr, id_cp, 'AUTHENTICATE', json.dumps({'encryption_key': encryption_key[:16] + '...'}), 'SUCCESS'))
+        log_audit('AUTH', request.remote_addr, id_cp, 'AUTH_SUCCESS',
+                 {'encryption_key_prefix': encryption_key[:16] + '...', 'estado': 'ACTIVADO'}, 'SUCCESS')
 
         return jsonify({"success": True, "encryption_key": encryption_key}), 200
 
     except Exception as e:
         print(f"[API_CENTRAL] Error en autenticacion: {e}")
+        log_audit('AUTH', request.remote_addr, id_cp, 'AUTH_ERROR',
+                 {'error': str(e)}, 'FAILED')
         return jsonify({"success": False, "error": f"Error interno: {e}"}), 500
 
 # ======================================================================

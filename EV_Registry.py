@@ -1,4 +1,4 @@
-# EV_Registry.py - Release 2 con HTTPS
+# EV_Registry.py - Release 2 con HTTPS y Auditoria
 import sqlite3
 import json
 import uuid
@@ -7,6 +7,34 @@ import ssl
 import os
 import ipaddress
 from flask import Flask, request, jsonify
+
+# ======================================================================
+# SISTEMA DE AUDITORIA
+# ======================================================================
+
+def log_audit(event_type: str, source_ip: str, source_id: str, action: str, parameters: dict, result: str):
+    """
+    Registra evento en tabla AUDIT_LOG.
+
+    Args:
+        event_type: 'AUTH', 'REGISTER', 'UNREGISTER', 'SECURITY', etc.
+        source_ip: IP del cliente
+        source_id: idCP o identificador
+        action: Descripcion de la accion
+        parameters: Dict con detalles del evento
+        result: 'SUCCESS', 'FAILED', 'PENDING'
+    """
+    try:
+        with sqlite3.connect(BBDD) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO AUDIT_LOG (event_type, source_ip, source_id, action, parameters, result)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (event_type, source_ip, source_id, action, json.dumps(parameters), result))
+            conn.commit()
+            print(f"[REGISTRY][AUDIT] {event_type} | {source_ip} | {source_id} | {action} | {result}")
+    except Exception as e:
+        print(f"[REGISTRY][AUDIT] Error registrando evento: {e}")
 
 # ======================================================================
 # CONFIGURACION
@@ -107,12 +135,18 @@ def register_cp():
                 }
             }
             print(f"[REGISTRY] Registro de CP {id_cp} completado. Token: {auth_token[:8]}...")
+            log_audit('REGISTER', request.remote_addr, id_cp, 'CP_REGISTER',
+                     {'precio': precio, 'ubicacion': ubicacion, 'token_prefix': auth_token[:8]}, 'SUCCESS')
             return jsonify(response), 201
         else:
+            log_audit('REGISTER', request.remote_addr, id_cp, 'CP_REGISTER',
+                     {'error': 'DB save failed'}, 'FAILED')
             return jsonify({"error": True, "message": "Error interno al guardar en BD"}), 500
 
     except Exception as e:
         print(f"[REGISTRY] Error en /register: {e}")
+        log_audit('REGISTER', request.remote_addr, data.get('idCP', 'unknown') if data else 'unknown',
+                 'CP_REGISTER', {'error': str(e)}, 'FAILED')
         return jsonify({"error": True, "message": f"Error interno: {e}"}), 500
 
 @app.route('/unregister/<id_cp>', methods=['DELETE'])
@@ -127,6 +161,8 @@ def unregister_cp(id_cp):
         # Verificar que el CP existe
         row = db_fetchone("SELECT auth_token FROM CP WHERE idCP = ?", (id_cp,))
         if not row:
+            log_audit('UNREGISTER', request.remote_addr, id_cp, 'CP_UNREGISTER',
+                     {'error': 'CP not found'}, 'FAILED')
             return jsonify({"error": True, "message": "CP no encontrado"}), 404
 
         # Eliminar CP de la base de datos
@@ -134,12 +170,18 @@ def unregister_cp(id_cp):
 
         if success:
             print(f"[REGISTRY] CP {id_cp} dado de baja")
+            log_audit('UNREGISTER', request.remote_addr, id_cp, 'CP_UNREGISTER',
+                     {'action': 'CP eliminado de BD'}, 'SUCCESS')
             return jsonify({"error": False, "message": f"CP {id_cp} dado de baja correctamente"}), 200
         else:
+            log_audit('UNREGISTER', request.remote_addr, id_cp, 'CP_UNREGISTER',
+                     {'error': 'DB delete failed'}, 'FAILED')
             return jsonify({"error": True, "message": "Error al dar de baja CP"}), 500
 
     except Exception as e:
         print(f"[REGISTRY] Error en /unregister: {e}")
+        log_audit('UNREGISTER', request.remote_addr, id_cp, 'CP_UNREGISTER',
+                 {'error': str(e)}, 'FAILED')
         return jsonify({"error": True, "message": f"Error interno: {e}"}), 500
 
 @app.route('/status/<id_cp>', methods=['GET'])

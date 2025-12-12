@@ -444,6 +444,8 @@ def handle_tcp_client(socket_conn, addr, producer):
                 cur.execute("UPDATE CP SET estado = ? WHERE idCP = ?", ("DESCONECTADO", id_cp_asociado))
                 db_conn.commit()
                 safe_log(f"[CENTRAL][TCP] Monitor {addr} desconectado -> CP {id_cp_asociado} DESCONECTADO")
+                log_audit('STATE_CHANGE', addr[0], id_cp_asociado, 'CP_DESCONECTADO',
+                         {'motivo': 'Conexion TCP cerrada'}, 'SUCCESS')
                 actualizar_pantalla.set()
             except Exception as e:
                 safe_log(f"[CENTRAL][TCP] Error al marcar DESCONECTADO: {e}")
