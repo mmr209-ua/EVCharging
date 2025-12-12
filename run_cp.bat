@@ -39,8 +39,8 @@ for /L %%I in (1, 1, %NUM_CPS%) do (
 echo.
 echo ==== Todos los CPs iniciados correctamente ====
 echo.
-echo Para registrar cada CP en su Monitor: R
-echo Para autenticar cada CP en Central:   A
+echo Para registrar cada CP en su Monitor: 1
+echo Para autenticar cada CP en Central:   2
 echo.
 pause
 exit

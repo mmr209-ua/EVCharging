@@ -450,7 +450,7 @@ def main():
     threading.Thread(target=reload_config_loop, daemon=True).start()
 
     def menu_thread():
-        nonlocal health_ok, estado, estado_real, autorizado, driver_id, en_suministro, menu_activo
+        nonlocal health_ok, estado, estado_real, autorizado, driver_id, en_suministro, menu_activo, encryption_key
 
         while menu_activo:
             with lock:

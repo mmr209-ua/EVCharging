@@ -1,0 +1,8 @@
+{
+  "idCP": "1",
+  "authToken": null,
+  "precio": 0.3,
+  "ubicacion": "Madrid",
+  "authenticated": false,
+  "encryption_key": null
+}

@@ -1,0 +1,16 @@
+# EVCharging - Release 2 Dependencies
+# Instalar con: pip install -r requirements.txt
+
+# Kafka
+kafka-python==2.0.2
+
+# Flask (API REST)
+flask==3.0.0
+flask-cors==4.0.0
+
+# HTTP requests
+requests==2.31.0
+urllib3==2.1.0
+
+# Cryptography (cifrado Fernet/AES)
+cryptography==41.0.7

@@ -89,8 +89,8 @@ echo   - Kafka broker:   %BROKER%
 echo   - CP %CP1_ID%:          Engine + Monitor
 echo   - Driver %DRIVER1_ID%
 echo.
-echo Para registrar CP en el Monitor: R
-echo Para autenticar CP en Central:   A
+echo Para registrar CP en el Monitor: 1
+echo Para autenticar CP en Central:   2
 echo ==========================================
 echo.
 

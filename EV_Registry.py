@@ -5,6 +5,7 @@ import uuid
 import sys
 import ssl
 import os
+import ipaddress
 from flask import Flask, request, jsonify
 
 # ======================================================================
@@ -114,41 +115,28 @@ def register_cp():
         print(f"[REGISTRY] Error en /register: {e}")
         return jsonify({"error": True, "message": f"Error interno: {e}"}), 500
 
-@app.route('/unregister', methods=['DELETE'])
-def unregister_cp():
+@app.route('/unregister/<id_cp>', methods=['DELETE'])
+def unregister_cp(id_cp):
     """
     Da de baja un CP del sistema.
-
-    Request JSON:
-        {
-            "idCP": "1",
-            "authToken": "uuid-token..."
-        }
+    El ID se pasa en la URL: DELETE /unregister/1
     """
     try:
-        data = request.get_json()
-        if not data or 'idCP' not in data:
-            return jsonify({"error": True, "message": "Datos incompletos"}), 400
+        id_cp = str(id_cp)
 
-        id_cp = str(data.get("idCP"))
-        auth_token = data.get("authToken")
-
-        # Verificar que el token es correcto
+        # Verificar que el CP existe
         row = db_fetchone("SELECT auth_token FROM CP WHERE idCP = ?", (id_cp,))
         if not row:
             return jsonify({"error": True, "message": "CP no encontrado"}), 404
 
-        if row[0] != auth_token:
-            return jsonify({"error": True, "message": "Token invalido"}), 401
-
-        # Eliminar CP
+        # Eliminar CP de la base de datos
         success = db_execute("DELETE FROM CP WHERE idCP = ?", (id_cp,))
 
         if success:
             print(f"[REGISTRY] CP {id_cp} dado de baja")
             return jsonify({"error": False, "message": f"CP {id_cp} dado de baja correctamente"}), 200
         else:
-            return jsonify({"error": True, "message": "Error al eliminar CP"}), 500
+            return jsonify({"error": True, "message": "Error al dar de baja CP"}), 500
 
     except Exception as e:
         print(f"[REGISTRY] Error en /unregister: {e}")
@@ -181,11 +169,74 @@ def get_cp_status(id_cp):
 # ======================================================================
 
 def generate_self_signed_cert():
-    """Genera certificados autofirmados si no existen."""
+    """Genera certificados autofirmados si no existen usando Python."""
     if not os.path.exists(CERT_FILE) or not os.path.exists(KEY_FILE):
         print("[REGISTRY] Generando certificados SSL autofirmados...")
-        os.system(f'openssl req -x509 -newkey rsa:4096 -keyout {KEY_FILE} -out {CERT_FILE} -days 365 -nodes -subj "/CN=localhost"')
-        print("[REGISTRY] Certificados generados")
+        try:
+            from cryptography import x509
+            from cryptography.x509.oid import NameOID
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.backends import default_backend
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from cryptography.hazmat.primitives import serialization
+            import datetime
+
+            # Generar clave privada
+            key = rsa.generate_private_key(
+                public_exponent=65537,
+                key_size=2048,
+                backend=default_backend()
+            )
+
+            # Crear certificado
+            subject = issuer = x509.Name([
+                x509.NameAttribute(NameOID.COUNTRY_NAME, "ES"),
+                x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Madrid"),
+                x509.NameAttribute(NameOID.LOCALITY_NAME, "Madrid"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "EVCharging"),
+                x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+            ])
+
+            cert = x509.CertificateBuilder().subject_name(
+                subject
+            ).issuer_name(
+                issuer
+            ).public_key(
+                key.public_key()
+            ).serial_number(
+                x509.random_serial_number()
+            ).not_valid_before(
+                datetime.datetime.utcnow()
+            ).not_valid_after(
+                datetime.datetime.utcnow() + datetime.timedelta(days=365)
+            ).add_extension(
+                x509.SubjectAlternativeName([
+                    x509.DNSName("localhost"),
+                    x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+                ]),
+                critical=False,
+            ).sign(key, hashes.SHA256(), default_backend())
+
+            # Guardar clave privada
+            with open(KEY_FILE, "wb") as f:
+                f.write(key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.TraditionalOpenSSL,
+                    encryption_algorithm=serialization.NoEncryption()
+                ))
+
+            # Guardar certificado
+            with open(CERT_FILE, "wb") as f:
+                f.write(cert.public_bytes(serialization.Encoding.PEM))
+
+            print("[REGISTRY] Certificados generados correctamente")
+        except ImportError:
+            print("[REGISTRY] ERROR: Instale cryptography: pip install cryptography")
+            return False
+        except Exception as e:
+            print(f"[REGISTRY] ERROR generando certificados: {e}")
+            return False
+    return True
 
 if __name__ == '__main__':
     # Verificar/generar certificados SSL

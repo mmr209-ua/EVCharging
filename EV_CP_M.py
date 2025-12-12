@@ -40,6 +40,10 @@ def main():
     central_port = int(sys.argv[5])
     registry_url = sys.argv[6] if len(sys.argv) > 6 else "https://localhost:5001"
 
+    # Asegurar que registry_url tiene protocolo https://
+    if not registry_url.startswith("http://") and not registry_url.startswith("https://"):
+        registry_url = "https://" + registry_url
+
     # Cargar configuracion existente
     config = load_config()
     if config.get("idCP") != cp_id:
@@ -100,7 +104,8 @@ def main():
             print(f"[CP_MONITOR {cp_id}] Error recibiendo de CENTRAL: {e}")
         return None
 
-    central_socket = connect_to_central()
+    central_socket = None
+    central_connected = False
 
     # =====================================================
     # FUNCIONES DE REGISTRO Y AUTENTICACION
@@ -110,6 +115,11 @@ def main():
         """Registra el CP en EV_Registry via HTTPS."""
         nonlocal config
         import requests
+
+        # Verificar si ya está registrado
+        if config.get("authToken"):
+            print(f"[CP_MONITOR {cp_id}] Ya esta registrado. Use opcion 3 para darse de baja primero.")
+            return False
 
         precio = input("Precio por kWh (default 0.30): ").strip() or "0.30"
         ubicacion = input("Ubicacion/Ciudad (default Madrid): ").strip() or "Madrid"
@@ -163,12 +173,18 @@ def main():
 
     def autenticar_en_central():
         """Autentica el CP en Central usando el authToken del Registry."""
-        nonlocal config
+        nonlocal config, central_socket, central_connected
 
         auth_token = config.get("authToken")
         if not auth_token:
-            print(f"[CP_MONITOR {cp_id}] Error: No hay authToken. Registrese primero (opcion R)")
+            print(f"[CP_MONITOR {cp_id}] Error: No hay authToken. Registrese primero (opcion 1)")
             return False
+
+        # Conectar a Central si no esta conectado
+        if not central_connected or central_socket is None:
+            print(f"[CP_MONITOR {cp_id}] Conectando a CENTRAL...")
+            central_socket = connect_to_central()
+            central_connected = True
 
         print(f"[CP_MONITOR {cp_id}] Enviando autenticacion a CENTRAL...")
 
@@ -190,6 +206,7 @@ def main():
 
                 print(f"[CP_MONITOR {cp_id}] Autenticacion EXITOSA!")
                 print(f"[CP_MONITOR {cp_id}] Clave de cifrado recibida y guardada")
+                print(f"[CP_MONITOR {cp_id}] Iniciando health checks a CENTRAL...")
                 return True
             elif response:
                 print(f"[CP_MONITOR {cp_id}] Autenticacion FALLIDA: {response.get('error', 'Error desconocido')}")
@@ -199,6 +216,58 @@ def main():
                 return False
         else:
             print(f"[CP_MONITOR {cp_id}] Error enviando autenticacion")
+            return False
+
+    def darse_de_baja():
+        """Da de baja el CP del Registry via HTTPS."""
+        nonlocal config, central_socket, central_connected
+        import requests
+
+        auth_token = config.get("authToken")
+        if not auth_token:
+            print(f"[CP_MONITOR {cp_id}] Error: No hay authToken. No esta registrado.")
+            return False
+
+        try:
+            print(f"[CP_MONITOR {cp_id}] Enviando baja a Registry: {registry_url}/unregister/{cp_id}")
+            response = requests.delete(
+                f"{registry_url}/unregister/{cp_id}",
+                verify=False,
+                timeout=10
+            )
+
+            result = response.json()
+
+            if not result.get('error'):
+                print(f"[CP_MONITOR {cp_id}] Baja exitosa en Registry!")
+
+                # Limpiar configuracion local
+                config["authToken"] = None
+                config["encryption_key"] = None
+                config["authenticated"] = False
+                save_config(config)
+
+                # Desconectar de Central
+                if central_connected and central_socket:
+                    try:
+                        central_socket.close()
+                    except:
+                        pass
+                    central_socket = None
+                    central_connected = False
+                    print(f"[CP_MONITOR {cp_id}] Desconectado de CENTRAL")
+
+                print(f"[CP_MONITOR {cp_id}] Configuracion limpiada")
+                return True
+            else:
+                print(f"[CP_MONITOR {cp_id}] Error: {result.get('message')}")
+                return False
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"[CP_MONITOR {cp_id}] Error de conexion: {e}")
+            return False
+        except Exception as e:
+            print(f"[CP_MONITOR {cp_id}] Error contactando Registry: {e}")
             return False
 
     def ver_configuracion():
@@ -216,7 +285,9 @@ def main():
     # =====================================================
 
     if config.get("authenticated") and config.get("encryption_key"):
-        print(f"[CP_MONITOR {cp_id}] Ya autenticado, registrando en CENTRAL...")
+        print(f"[CP_MONITOR {cp_id}] Ya autenticado, conectando a CENTRAL...")
+        central_socket = connect_to_central()
+        central_connected = True
         register_msg = {
             "type": "register",
             "idCP": cp_id,
@@ -265,25 +336,28 @@ def main():
         nonlocal config
         while True:
             print(f"\n--- MENU CP_MONITOR {cp_id} ---")
-            print("R - Registrarse en Registry (HTTPS)")
-            print("A - Autenticarse en Central")
-            print("C - Ver configuracion")
-            print("Q - Salir del menu")
+            print("1 - Registrarse en Registry (HTTPS)")
+            print("2 - Autenticarse en Central")
+            print("3 - Darse de baja en Registry")
+            print("4 - Ver configuracion")
+            print("5 - Salir del menu")
 
             try:
-                opcion = input("Opcion: ").strip().upper()
+                opcion = input("Opcion: ").strip()
             except (EOFError, KeyboardInterrupt):
                 break
 
-            if opcion == "R":
+            if opcion == "1":
                 registrar_en_registry()
-            elif opcion == "A":
+            elif opcion == "2":
                 autenticar_en_central()
-            elif opcion == "C":
+            elif opcion == "3":
+                darse_de_baja()
+            elif opcion == "4":
                 ver_configuracion()
-            elif opcion == "Q":
-                print("Saliendo del menu...")
-                break
+            elif opcion == "5":
+                print("Saliendo...")
+                os._exit(0)
 
     # Iniciar menu en hilo separado
     threading.Thread(target=menu_interactivo, daemon=True).start()
@@ -294,6 +368,11 @@ def main():
 
     try:
         while True:
+            # Solo enviar health checks si estamos conectados a Central
+            if not central_connected:
+                time.sleep(2)
+                continue
+
             # Health check del Engine
             ok = False
             try:
@@ -345,12 +424,13 @@ def main():
     except Exception as e:
         print(f"[CP_MONITOR {cp_id}] Error: {e}")
     finally:
-        # Cerrar socket de Central
-        try:
-            central_socket.close()
-            print(f"[CP_MONITOR {cp_id}] Socket de Central cerrado")
-        except:
-            pass
+        # Cerrar socket de Central si existe
+        if central_socket:
+            try:
+                central_socket.close()
+                print(f"[CP_MONITOR {cp_id}] Socket de Central cerrado")
+            except:
+                pass
         print(f"[CP_MONITOR {cp_id}] Monitor finalizado correctamente")
 
 if __name__ == "__main__":
