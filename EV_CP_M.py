@@ -85,25 +85,6 @@ def main():
                     return False
         return False
 
-    def receive_from_central():
-        """Recibe respuesta de Central (para autenticacion)."""
-        try:
-            central_socket.settimeout(10)
-            data = b""
-            while True:
-                chunk = central_socket.recv(1024)
-                if not chunk:
-                    break
-                data += chunk
-                if b"\n" in data:
-                    break
-            central_socket.settimeout(5)
-            if data:
-                return json.loads(data.decode('utf-8').strip())
-        except Exception as e:
-            print(f"[CP_MONITOR {cp_id}] Error recibiendo de CENTRAL: {e}")
-        return None
-
     central_socket = None
     central_connected = False
 
@@ -172,50 +153,68 @@ def main():
             return False
 
     def autenticar_en_central():
-        """Autentica el CP en Central usando el authToken del Registry."""
+        """Autentica el CP en Central usando el authToken del Registry via API REST."""
         nonlocal config, central_socket, central_connected
+        import requests
 
         auth_token = config.get("authToken")
         if not auth_token:
             print(f"[CP_MONITOR {cp_id}] Error: No hay authToken. Registrese primero (opcion 1)")
             return False
 
-        # Conectar a Central si no esta conectado
-        if not central_connected or central_socket is None:
-            print(f"[CP_MONITOR {cp_id}] Conectando a CENTRAL...")
-            central_socket = connect_to_central()
-            central_connected = True
+        # URL de API_Central (puerto 5002 en el mismo host que Central)
+        api_url = f"http://{central_ip}:5002"
 
-        print(f"[CP_MONITOR {cp_id}] Enviando autenticacion a CENTRAL...")
+        print(f"[CP_MONITOR {cp_id}] Enviando autenticacion a API_Central: {api_url}/authenticate")
 
-        auth_msg = {
-            "type": "authenticate",
-            "idCP": cp_id,
-            "authToken": auth_token
-        }
+        try:
+            data = {
+                "idCP": cp_id,
+                "authToken": auth_token
+            }
+            response = requests.post(
+                f"{api_url}/authenticate",
+                json=data,
+                timeout=10
+            )
 
-        if send_to_central(auth_msg):
-            # Esperar respuesta con encryption_key
-            response = receive_from_central()
+            result = response.json()
 
-            if response and response.get("success"):
-                encryption_key = response.get("encryption_key")
+            if result.get("success"):
+                encryption_key = result.get("encryption_key")
                 config["encryption_key"] = encryption_key
                 config["authenticated"] = True
                 save_config(config)
 
                 print(f"[CP_MONITOR {cp_id}] Autenticacion EXITOSA!")
                 print(f"[CP_MONITOR {cp_id}] Clave de cifrado recibida y guardada")
-                print(f"[CP_MONITOR {cp_id}] Iniciando health checks a CENTRAL...")
+
+                # Conectar a Central TCP para health checks
+                print(f"[CP_MONITOR {cp_id}] Conectando a CENTRAL para health checks...")
+                central_socket = connect_to_central()
+                central_connected = True
+
+                # Registrar en Central
+                register_msg = {
+                    "type": "register",
+                    "idCP": cp_id,
+                    "precio": config.get("precio", 0.30),
+                    "ubicacion": config.get("ubicacion", f"Zona-{cp_id}")
+                }
+                if send_to_central(register_msg):
+                    print(f"[CP_MONITOR {cp_id}] Registrado en CENTRAL, iniciando health checks...")
+
                 return True
-            elif response:
-                print(f"[CP_MONITOR {cp_id}] Autenticacion FALLIDA: {response.get('error', 'Error desconocido')}")
-                return False
             else:
-                print(f"[CP_MONITOR {cp_id}] No se recibio respuesta de CENTRAL")
+                print(f"[CP_MONITOR {cp_id}] Autenticacion FALLIDA: {result.get('error', 'Error desconocido')}")
                 return False
-        else:
-            print(f"[CP_MONITOR {cp_id}] Error enviando autenticacion")
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"[CP_MONITOR {cp_id}] Error de conexion a API_Central: {e}")
+            print(f"[CP_MONITOR {cp_id}] Asegurese de que Central esta ejecutandose en {central_ip}")
+            return False
+        except Exception as e:
+            print(f"[CP_MONITOR {cp_id}] Error en autenticacion: {e}")
             return False
 
     def darse_de_baja():

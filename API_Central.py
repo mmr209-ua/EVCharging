@@ -6,6 +6,13 @@ import json
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
+# Importar modulo de cifrado (Release 2)
+try:
+    from crypto_utils import generate_encryption_key
+except ImportError:
+    print("[API_CENTRAL] ADVERTENCIA: crypto_utils no encontrado, cifrado deshabilitado")
+    generate_encryption_key = lambda: "dummy_key"
+
 app = Flask(__name__)
 CORS(app)  # Permitir CORS para el Front Web
 
@@ -284,6 +291,85 @@ def health_check():
     """Endpoint de health check."""
     return jsonify({"status": "ok", "service": "API_Central"}), 200
 
+@app.route('/authenticate', methods=['POST'])
+def authenticate_cp():
+    """
+    Autentica un CP usando el auth_token del Registry.
+    Si es valido, genera y devuelve una encryption_key unica.
+
+    Request JSON:
+    {
+        "idCP": "1",
+        "authToken": "uuid-token..."
+    }
+
+    Response JSON (exito):
+    {
+        "success": true,
+        "encryption_key": "clave_generada..."
+    }
+
+    Response JSON (error):
+    {
+        "success": false,
+        "error": "Mensaje de error"
+    }
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"success": False, "error": "Datos requeridos"}), 400
+
+    id_cp = str(data.get("idCP", ""))
+    auth_token = data.get("authToken", "")
+
+    if not id_cp or not auth_token:
+        return jsonify({"success": False, "error": "idCP y authToken son requeridos"}), 400
+
+    print(f"[API_CENTRAL] Intento de autenticacion de CP {id_cp}")
+
+    try:
+        # Verificar que el CP existe y tiene el token correcto
+        rows = db_fetchall("SELECT auth_token, authenticated FROM CP WHERE idCP = ?", (id_cp,))
+
+        if not rows:
+            print(f"[API_CENTRAL] CP {id_cp} no registrado en Registry")
+            db_execute("""
+                INSERT INTO AUDIT_LOG (event_type, source_ip, source_id, action, parameters, result)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, ('AUTH', request.remote_addr, id_cp, 'AUTHENTICATE', json.dumps({'reason': 'CP not registered'}), 'FAILED'))
+            return jsonify({"success": False, "error": "CP no registrado. Registrese primero en Registry."}), 404
+
+        stored_token = rows[0]["auth_token"]
+
+        if stored_token != auth_token:
+            print(f"[API_CENTRAL] Token invalido para CP {id_cp}")
+            db_execute("""
+                INSERT INTO AUDIT_LOG (event_type, source_ip, source_id, action, parameters, result)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, ('AUTH', request.remote_addr, id_cp, 'AUTHENTICATE', json.dumps({'reason': 'Invalid token'}), 'FAILED'))
+            return jsonify({"success": False, "error": "Token de autenticacion invalido"}), 401
+
+        # Generar clave de cifrado unica
+        encryption_key = generate_encryption_key()
+
+        # Guardar en BD
+        db_execute("""
+            UPDATE CP SET encryption_key = ?, authenticated = 1, estado = 'ACTIVADO'
+            WHERE idCP = ?
+        """, (encryption_key, id_cp))
+
+        print(f"[API_CENTRAL] CP {id_cp} AUTENTICADO correctamente")
+        db_execute("""
+            INSERT INTO AUDIT_LOG (event_type, source_ip, source_id, action, parameters, result)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, ('AUTH', request.remote_addr, id_cp, 'AUTHENTICATE', json.dumps({'encryption_key': encryption_key[:16] + '...'}), 'SUCCESS'))
+
+        return jsonify({"success": True, "encryption_key": encryption_key}), 200
+
+    except Exception as e:
+        print(f"[API_CENTRAL] Error en autenticacion: {e}")
+        return jsonify({"success": False, "error": f"Error interno: {e}"}), 500
+
 # ======================================================================
 # MAIN (standalone mode)
 # ======================================================================
@@ -291,11 +377,12 @@ def health_check():
 if __name__ == '__main__':
     print("[API_CENTRAL] Iniciando API REST en puerto 5002")
     print("[API_CENTRAL] Endpoints disponibles:")
-    print("  GET  /cps          - Lista CPs")
-    print("  GET  /drivers      - Lista conductores")
-    print("  GET  /transactions - Lista transacciones")
+    print("  GET  /cps           - Lista CPs")
+    print("  GET  /drivers       - Lista conductores")
+    print("  GET  /transactions  - Lista transacciones")
     print("  POST /weather_alert - Recibe alertas de EV_W")
-    print("  GET  /audit        - Lista auditoria")
-    print("  GET  /weather      - Estado del clima")
-    print("  GET  /health       - Health check")
+    print("  POST /authenticate  - Autentica CP con token")
+    print("  GET  /audit         - Lista auditoria")
+    print("  GET  /weather       - Estado del clima")
+    print("  GET  /health        - Health check")
     app.run(host='0.0.0.0', port=5002, debug=False)
