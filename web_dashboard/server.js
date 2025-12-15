@@ -89,6 +89,70 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
+// ======================================================================
+// PROXY ENDPOINTS - Control de CPs
+// ======================================================================
+
+// Parar un CP especifico
+app.post('/api/cp/:idCP/parar', async (req, res) => {
+    try {
+        const response = await axios.post(`${API_CENTRAL_URL}/cp/${req.params.idCP}/parar`);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[WEB] Error parando CP:', error.message);
+        const data = error.response?.data || { success: false, error: 'Error conectando con API_Central' };
+        res.status(error.response?.status || 500).json(data);
+    }
+});
+
+// Reanudar un CP especifico
+app.post('/api/cp/:idCP/reanudar', async (req, res) => {
+    try {
+        const response = await axios.post(`${API_CENTRAL_URL}/cp/${req.params.idCP}/reanudar`);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[WEB] Error reanudando CP:', error.message);
+        const data = error.response?.data || { success: false, error: 'Error conectando con API_Central' };
+        res.status(error.response?.status || 500).json(data);
+    }
+});
+
+// Parar todos los CPs
+app.post('/api/cp/parar_todos', async (req, res) => {
+    try {
+        const response = await axios.post(`${API_CENTRAL_URL}/cp/parar_todos`);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[WEB] Error parando todos los CPs:', error.message);
+        const data = error.response?.data || { success: false, error: 'Error conectando con API_Central' };
+        res.status(error.response?.status || 500).json(data);
+    }
+});
+
+// Reanudar todos los CPs
+app.post('/api/cp/reanudar_todos', async (req, res) => {
+    try {
+        const response = await axios.post(`${API_CENTRAL_URL}/cp/reanudar_todos`);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[WEB] Error reanudando todos los CPs:', error.message);
+        const data = error.response?.data || { success: false, error: 'Error conectando con API_Central' };
+        res.status(error.response?.status || 500).json(data);
+    }
+});
+
+// Restaurar claves (revocar todas)
+app.post('/api/restaurar_claves', async (req, res) => {
+    try {
+        const response = await axios.post(`${API_CENTRAL_URL}/restaurar_claves`);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[WEB] Error restaurando claves:', error.message);
+        const data = error.response?.data || { success: false, error: 'Error conectando con API_Central' };
+        res.status(error.response?.status || 500).json(data);
+    }
+});
+
 // Ruta principal - servir index.html
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));

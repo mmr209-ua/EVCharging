@@ -102,6 +102,13 @@ function renderCPs(cps) {
     document.getElementById('charging-cps').textContent = suministrando;
     document.getElementById('paused-cps').textContent = pausados;
 
+    // Actualizar selector de CPs
+    const cpSelect = document.getElementById('cp-select');
+    const currentValue = cpSelect.value;
+    cpSelect.innerHTML = '<option value="">-- Seleccionar --</option>' +
+        cps.map(cp => `<option value="${cp.idCP}">CP ${cp.idCP} (${cp.estado})</option>`).join('');
+    cpSelect.value = currentValue;
+
     // Renderizar tabla
     const tbody = document.querySelector('#cps-table tbody');
 
@@ -284,4 +291,126 @@ function renderAudit(auditLogs) {
             </tr>
         `;
     }).join('');
+}
+
+// ======================================================================
+// FUNCIONES DE CONTROL
+// ======================================================================
+
+async function pararCP() {
+    const cpId = document.getElementById('cp-select').value;
+    if (!cpId) {
+        showNotification('Selecciona un CP primero', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/cp/${cpId}/parar`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification(`CP ${cpId} parado correctamente`, 'success');
+            updateAll();
+        } else {
+            showNotification(data.error || 'Error al parar CP', 'error');
+        }
+    } catch (error) {
+        showNotification('Error de conexion', 'error');
+    }
+}
+
+async function reanudarCP() {
+    const cpId = document.getElementById('cp-select').value;
+    if (!cpId) {
+        showNotification('Selecciona un CP primero', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/cp/${cpId}/reanudar`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification(`CP ${cpId} reanudado correctamente`, 'success');
+            updateAll();
+        } else {
+            showNotification(data.error || 'Error al reanudar CP', 'error');
+        }
+    } catch (error) {
+        showNotification('Error de conexion', 'error');
+    }
+}
+
+async function pararTodos() {
+    if (!confirm('¿Seguro que quieres parar todos los CPs activos?')) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/cp/parar_todos`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification(data.message, 'success');
+            updateAll();
+        } else {
+            showNotification(data.error || 'Error al parar todos', 'error');
+        }
+    } catch (error) {
+        showNotification('Error de conexion', 'error');
+    }
+}
+
+async function reanudarTodos() {
+    if (!confirm('¿Seguro que quieres reanudar todos los CPs parados?')) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/cp/reanudar_todos`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification(data.message, 'success');
+            updateAll();
+        } else {
+            showNotification(data.error || 'Error al reanudar todos', 'error');
+        }
+    } catch (error) {
+        showNotification('Error de conexion', 'error');
+    }
+}
+
+async function restaurarClaves() {
+    if (!confirm('¡ATENCION! Esto revocara TODAS las claves de cifrado.\nLos CPs quedaran DESACTIVADOS y deberan re-autenticarse.\n\n¿Continuar?')) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/restaurar_claves`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification('Claves revocadas. Los CPs deben re-autenticarse.', 'success');
+            updateAll();
+        } else {
+            showNotification(data.error || 'Error al restaurar claves', 'error');
+        }
+    } catch (error) {
+        showNotification('Error de conexion', 'error');
+    }
+}
+
+function showNotification(message, type) {
+    // Eliminar notificacion anterior si existe
+    const existing = document.querySelector('.notification');
+    if (existing) existing.remove();
+
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type}`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+
+    // Mostrar con animacion
+    setTimeout(() => notification.classList.add('show'), 10);
+
+    // Ocultar despues de 3 segundos
+    setTimeout(() => {
+        notification.classList.remove('show');
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
 }

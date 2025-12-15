@@ -333,3 +333,147 @@ footer {
     padding: 40px;
     color: #666;
 }
+
+/* Control Panel */
+.control-panel {
+    background: linear-gradient(135deg, #16213e, #1a1a2e);
+    border: 1px solid #0f3460;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 25px;
+}
+
+.control-panel h3 {
+    color: #00d9ff;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+}
+
+.control-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: center;
+}
+
+.control-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.control-group label {
+    color: #aaa;
+    font-size: 0.9rem;
+}
+
+.control-group select {
+    background-color: #0f3460;
+    border: 1px solid #16213e;
+    color: #fff;
+    padding: 10px 15px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    min-width: 180px;
+    cursor: pointer;
+}
+
+.control-group select:focus {
+    outline: none;
+    border-color: #00d9ff;
+}
+
+/* Buttons */
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.btn:active {
+    transform: translateY(0);
+}
+
+.btn-green {
+    background-color: #00c853;
+    color: #fff;
+}
+
+.btn-green:hover {
+    background-color: #00e676;
+}
+
+.btn-orange {
+    background-color: #ff9800;
+    color: #fff;
+}
+
+.btn-orange:hover {
+    background-color: #ffb300;
+}
+
+.btn-red {
+    background-color: #ff5252;
+    color: #fff;
+}
+
+.btn-red:hover {
+    background-color: #ff6b6b;
+}
+
+/* Notifications */
+.notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 15px 25px;
+    border-radius: 8px;
+    font-weight: bold;
+    z-index: 1000;
+    transform: translateX(120%);
+    transition: transform 0.3s ease;
+}
+
+.notification.show {
+    transform: translateX(0);
+}
+
+.notification-success {
+    background-color: #00c853;
+    color: #fff;
+}
+
+.notification-error {
+    background-color: #ff5252;
+    color: #fff;
+}
+
+/* Responsive control panel */
+@media (max-width: 768px) {
+    .control-buttons {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .control-group {
+        width: 100%;
+    }
+
+    .control-group select {
+        width: 100%;
+    }
+
+    .btn {
+        width: 100%;
+    }
+}

@@ -444,6 +444,136 @@ def authenticate_cp():
         return jsonify({"success": False, "error": f"Error interno: {e}"}), 500
 
 # ======================================================================
+# CONTROL DE CPs (para Web Dashboard)
+# ======================================================================
+
+@app.route('/cp/<id_cp>/parar', methods=['POST'])
+def parar_cp(id_cp):
+    """Para un CP especifico."""
+    try:
+        rows = db_fetchall("SELECT estado FROM CP WHERE idCP = ?", (id_cp,))
+        if not rows:
+            return jsonify({"success": False, "error": "CP no encontrado"}), 404
+
+        estado_actual = rows[0]['estado']
+        if estado_actual in ('PARADO', 'AVERIADO', 'DESCONECTADO', 'DESACTIVADO'):
+            return jsonify({"success": False, "error": f"CP ya esta en estado {estado_actual}"}), 400
+
+        db_execute("UPDATE CP SET estado = 'PARADO' WHERE idCP = ?", (id_cp,))
+
+        # Enviar orden via Kafka
+        if kafka_producer:
+            try:
+                kafka_producer.send("CP_CONTROL", {"accion": "PARAR", "idCP": id_cp})
+                kafka_producer.flush()
+            except Exception as e:
+                print(f"[API_CENTRAL] Error enviando PARAR a Kafka: {e}")
+
+        log_audit('CONTROL_ORDER', request.remote_addr, id_cp, 'PARAR', {'source': 'WebDashboard'}, 'SUCCESS')
+        trigger_pantalla_update()
+
+        return jsonify({"success": True, "message": f"CP {id_cp} parado"}), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/cp/<id_cp>/reanudar', methods=['POST'])
+def reanudar_cp(id_cp):
+    """Reanuda un CP especifico."""
+    try:
+        rows = db_fetchall("SELECT estado, paused_by_weather FROM CP WHERE idCP = ?", (id_cp,))
+        if not rows:
+            return jsonify({"success": False, "error": "CP no encontrado"}), 404
+
+        estado_actual = rows[0]['estado']
+        if estado_actual not in ('PARADO',):
+            return jsonify({"success": False, "error": f"CP no puede reanudarse desde estado {estado_actual}"}), 400
+
+        db_execute("UPDATE CP SET estado = 'ACTIVADO', paused_by_weather = 0 WHERE idCP = ?", (id_cp,))
+
+        # Enviar orden via Kafka
+        if kafka_producer:
+            try:
+                kafka_producer.send("CP_CONTROL", {"accion": "REANUDAR", "idCP": id_cp})
+                kafka_producer.flush()
+            except Exception as e:
+                print(f"[API_CENTRAL] Error enviando REANUDAR a Kafka: {e}")
+
+        log_audit('CONTROL_ORDER', request.remote_addr, id_cp, 'REANUDAR', {'source': 'WebDashboard'}, 'SUCCESS')
+        trigger_pantalla_update()
+
+        return jsonify({"success": True, "message": f"CP {id_cp} reanudado"}), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/cp/parar_todos', methods=['POST'])
+def parar_todos_cps():
+    """Para todos los CPs (igual que boton GUI de Central)."""
+    try:
+        # Actualizar TODOS los CPs a PARADO (igual que GUI)
+        db_execute("UPDATE CP SET estado = 'PARADO'")
+
+        # Enviar UN solo mensaje Kafka con idCP="todos" (igual que GUI)
+        if kafka_producer:
+            try:
+                kafka_producer.send("CP_CONTROL", {"accion": "PARAR", "idCP": "todos"})
+                kafka_producer.flush()
+            except Exception as e:
+                print(f"[API_CENTRAL] Error enviando PARAR TODOS a Kafka: {e}")
+
+        log_audit('CONTROL_ORDER', request.remote_addr, 'ALL', 'PARAR_TODOS',
+                 {'source': 'WebDashboard'}, 'SUCCESS')
+        trigger_pantalla_update()
+
+        return jsonify({"success": True, "message": "Orden PARAR enviada a TODOS los CPs"}), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/cp/reanudar_todos', methods=['POST'])
+def reanudar_todos_cps():
+    """Reanuda todos los CPs (igual que boton GUI de Central)."""
+    try:
+        # Actualizar TODOS los CPs a ACTIVADO y quitar pausa por clima (igual que GUI)
+        db_execute("UPDATE CP SET estado = 'ACTIVADO', paused_by_weather = 0")
+
+        # Enviar UN solo mensaje Kafka con idCP="todos" (igual que GUI)
+        if kafka_producer:
+            try:
+                kafka_producer.send("CP_CONTROL", {"accion": "REANUDAR", "idCP": "todos"})
+                kafka_producer.flush()
+            except Exception as e:
+                print(f"[API_CENTRAL] Error enviando REANUDAR TODOS a Kafka: {e}")
+
+        log_audit('CONTROL_ORDER', request.remote_addr, 'ALL', 'REANUDAR_TODOS',
+                 {'source': 'WebDashboard'}, 'SUCCESS')
+        trigger_pantalla_update()
+
+        return jsonify({"success": True, "message": "Orden REANUDAR enviada a TODOS los CPs"}), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/restaurar_claves', methods=['POST'])
+def restaurar_claves():
+    """Revoca todas las claves de cifrado y desactiva los CPs."""
+    try:
+        db_execute("UPDATE CP SET encryption_key = NULL, authenticated = 0, estado = 'DESACTIVADO'")
+
+        log_audit('SECURITY', request.remote_addr, 'CENTRAL', 'REVOKE_KEYS',
+                 {'action': 'Revoke all encryption keys via WebDashboard'}, 'SUCCESS')
+        trigger_pantalla_update()
+
+        return jsonify({
+            "success": True,
+            "message": "Todas las claves revocadas. Los CPs deben re-autenticarse."
+        }), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+# ======================================================================
 # MAIN (standalone mode)
 # ======================================================================
 

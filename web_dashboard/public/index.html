@@ -26,6 +26,27 @@
         <!-- Panel de Charging Points -->
         <section id="cps-tab" class="tab-content active">
             <h2>Estado de Charging Points</h2>
+
+            <!-- Panel de Control -->
+            <div class="control-panel">
+                <h3>Panel de Control</h3>
+                <div class="control-buttons">
+                    <div class="control-group">
+                        <label for="cp-select">Seleccionar CP:</label>
+                        <select id="cp-select">
+                            <option value="">-- Seleccionar --</option>
+                        </select>
+                        <button class="btn btn-orange" onclick="pararCP()">Parar CP</button>
+                        <button class="btn btn-green" onclick="reanudarCP()">Reanudar CP</button>
+                    </div>
+                    <div class="control-group">
+                        <button class="btn btn-orange" onclick="pararTodos()">Parar Todos</button>
+                        <button class="btn btn-green" onclick="reanudarTodos()">Reanudar Todos</button>
+                        <button class="btn btn-red" onclick="restaurarClaves()">Restaurar Claves</button>
+                    </div>
+                </div>
+            </div>
+
             <div class="summary-cards">
                 <div class="card">
                     <span class="card-value" id="total-cps">0</span>
