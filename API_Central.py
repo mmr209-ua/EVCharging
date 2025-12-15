@@ -49,11 +49,23 @@ BBDD = "Base_Datos.sqlite"
 
 # Variable global para el producer de Kafka (se inyecta desde EV_Central)
 kafka_producer = None
+# Evento para actualizar pantalla de Central (se inyecta desde EV_Central)
+actualizar_pantalla_event = None
 
 def set_kafka_producer(producer):
     """Inyecta el producer de Kafka desde EV_Central."""
     global kafka_producer
     kafka_producer = producer
+
+def set_actualizar_pantalla(event):
+    """Inyecta el evento de actualizar pantalla desde EV_Central."""
+    global actualizar_pantalla_event
+    actualizar_pantalla_event = event
+
+def trigger_pantalla_update():
+    """Dispara actualizacion de la pantalla de Central."""
+    if actualizar_pantalla_event:
+        actualizar_pantalla_event.set()
 
 # ======================================================================
 # UTILIDADES BD
@@ -236,16 +248,17 @@ def weather_alert():
 
         else:
             # Temperatura normal - REANUDAR CPs
+            # Obtener CPs con su estado de pausa por clima
+            cps = db_fetchall("SELECT idCP, estado, paused_by_weather FROM CP WHERE ubicacion = ?", (ubicacion,))
+
             for cp in cps:
                 id_cp = cp["idCP"]
                 estado = cp["estado"]
+                was_paused_by_weather = cp["paused_by_weather"]
 
-                # Quitar marca de pausa por clima
-                db_execute("UPDATE CP SET paused_by_weather = 0 WHERE idCP = ?", (id_cp,))
-
-                if estado == "PARADO":
-                    # Reanudar
-                    db_execute("UPDATE CP SET estado = 'ACTIVADO' WHERE idCP = ?", (id_cp,))
+                # Quitar marca de pausa por clima y reactivar si estaba pausado por clima
+                if was_paused_by_weather:
+                    db_execute("UPDATE CP SET paused_by_weather = 0, estado = 'ACTIVADO' WHERE idCP = ?", (id_cp,))
                     affected_cps.append({"idCP": id_cp, "action": "RESUMED"})
 
                     # Enviar orden REANUDAR via Kafka
@@ -255,6 +268,9 @@ def weather_alert():
                             kafka_producer.flush()
                         except Exception as e:
                             print(f"[API_CENTRAL] Error enviando REANUDAR a Kafka: {e}")
+                else:
+                    # Solo quitar marca si no estaba pausado
+                    db_execute("UPDATE CP SET paused_by_weather = 0 WHERE idCP = ?", (id_cp,))
 
             print(f"[API_CENTRAL] Alerta CANCELADA para {ubicacion}: {temperatura}C, CPs reanudados: {len(affected_cps)}")
 
@@ -262,6 +278,9 @@ def weather_alert():
         log_audit('WEATHER_ALERT', request.remote_addr, 'EV_W',
                  'ALERT_ACTIVATED' if alert else 'ALERT_CANCELLED',
                  {'ubicacion': ubicacion, 'temperatura': temperatura, 'cps_afectados': len(affected_cps)}, 'SUCCESS')
+
+        # Actualizar pantalla de Central para mostrar cambios
+        trigger_pantalla_update()
 
         return jsonify({
             "success": True,
@@ -313,6 +332,51 @@ def get_weather_status():
 def health_check():
     """Endpoint de health check."""
     return jsonify({"status": "ok", "service": "API_Central"}), 200
+
+@app.route('/cp/<id_cp>/ubicacion', methods=['PUT'])
+def cambiar_ubicacion_cp(id_cp):
+    """
+    Cambia la ubicacion de un CP.
+
+    Request JSON:
+    {
+        "ubicacion": "Paris"
+    }
+    """
+    data = request.get_json()
+    if not data or 'ubicacion' not in data:
+        return jsonify({"error": True, "message": "Ubicacion requerida"}), 400
+
+    nueva_ubicacion = data['ubicacion']
+
+    try:
+        # Verificar que el CP existe
+        rows = db_fetchall("SELECT ubicacion FROM CP WHERE idCP = ?", (id_cp,))
+        if not rows:
+            return jsonify({"error": True, "message": "CP no encontrado"}), 404
+
+        ubicacion_anterior = rows[0]['ubicacion']
+
+        # Actualizar ubicacion
+        db_execute("UPDATE CP SET ubicacion = ? WHERE idCP = ?", (nueva_ubicacion, id_cp))
+
+        print(f"[API_CENTRAL] CP {id_cp}: ubicacion cambiada de '{ubicacion_anterior}' a '{nueva_ubicacion}'")
+        log_audit('STATE_CHANGE', request.remote_addr, id_cp, 'CAMBIO_UBICACION',
+                 {'ubicacion_anterior': ubicacion_anterior, 'ubicacion_nueva': nueva_ubicacion}, 'SUCCESS')
+
+        # Actualizar pantalla de Central
+        trigger_pantalla_update()
+
+        return jsonify({
+            "success": True,
+            "message": f"Ubicacion de CP {id_cp} cambiada a {nueva_ubicacion}",
+            "ubicacion_anterior": ubicacion_anterior,
+            "ubicacion_nueva": nueva_ubicacion
+        }), 200
+
+    except Exception as e:
+        print(f"[API_CENTRAL] Error cambiando ubicacion: {e}")
+        return jsonify({"error": True, "message": str(e)}), 500
 
 @app.route('/authenticate', methods=['POST'])
 def authenticate_cp():

@@ -37,6 +37,7 @@ COLORS = {
     "AVERIADO": "#FF0000",
     "DESCONECTADO": "#9E9B9B",
     "DESACTIVADO": "#8B0000",  # Rojo oscuro - fuera de servicio
+    "CLIMA": "#87CEEB",  # Azul claro - fuera de servicio por clima
 }
 
 def safe_log(msg: str):
@@ -658,14 +659,20 @@ class CentralGUI(tk.Tk):
             kwh_display = f"{kwh:.2f}" if estado == "SUMINISTRANDO" and kwh is not None else ""
             importe_display = f"{importe:.2f}" if estado == "SUMINISTRANDO" and importe is not None else ""
             auth_display = "Si" if authenticated else "No"
-            clima_display = "Alerta" if paused_by_weather else "OK"
+            clima_display = "Fuera de servicio" if paused_by_weather else "OK"
 
             iid = self.tree.insert("", tk.END,
                 values=(idCP, estado_display, precio, ubicacion, kwh_display, importe_display, auth_display, clima_display))
 
-            bg = COLORS.get(estado, COLORS["DESCONECTADO"])
-            self.tree.item(iid, tags=(estado,))
-            self.tree.tag_configure(estado, background=bg)
+            # Usar color azul si esta pausado por clima, si no usar color del estado
+            if paused_by_weather:
+                color_tag = "CLIMA"
+            else:
+                color_tag = estado
+
+            bg = COLORS.get(color_tag, COLORS["DESCONECTADO"])
+            self.tree.item(iid, tags=(color_tag,))
+            self.tree.tag_configure(color_tag, background=bg)
 
             if idCP == selected:
                 self.tree.selection_set(iid)
@@ -854,8 +861,9 @@ def main():
 
     # Iniciar API_Central en hilo separado (Release 2)
     try:
-        from API_Central import app as api_app, set_kafka_producer
+        from API_Central import app as api_app, set_kafka_producer, set_actualizar_pantalla
         set_kafka_producer(producer)
+        set_actualizar_pantalla(actualizar_pantalla)
 
         def run_api():
             import logging

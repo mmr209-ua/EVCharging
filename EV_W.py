@@ -14,13 +14,17 @@ OPENWEATHER_URL = "https://api.openweathermap.org/data/2.5/weather"
 POLL_INTERVAL = 4  # segundos
 
 # API Key de OpenWeather (obtener en https://openweathermap.org/api)
-OPENWEATHER_API_KEY = os.getenv('OPENWEATHER_API_KEY', '')
+#OPENWEATHER_API_KEY = os.getenv('OPENWEATHER_API_KEY', '')
+OPENWEATHER_API_KEY = 'bb8f440acab5a67c5a3098393be1e5e8'
 
 # Cache de estado de alertas por ubicacion
 alert_state: Dict[str, bool] = {}
 
 # Mapeo de ubicaciones internas a ciudades reales (configurable)
 LOCATION_MAPPING: Dict[str, str] = {}
+
+# Flag para indicar si el usuario esta escribiendo en el menu
+menu_activo = False
 
 def get_ubicaciones_from_db() -> List[str]:
     """Obtiene ubicaciones unicas de CPs desde BD."""
@@ -110,20 +114,73 @@ def send_alert(ubicacion: str, alert: bool, temperatura: float):
     except Exception as e:
         print(f"[EV_W] Error enviando alerta: {e}")
 
-def add_location(ubicacion: str, city: str = None):
-    """Anade una ubicacion al monitoreo."""
-    if city:
-        LOCATION_MAPPING[ubicacion] = city
-    alert_state[ubicacion] = False
-    print(f"[EV_W] Ubicacion anadida: {ubicacion} -> {city or ubicacion}")
+def get_cps_from_db():
+    """Obtiene lista de CPs con su ubicacion desde BD."""
+    try:
+        with sqlite3.connect(BBDD) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT idCP, ubicacion FROM CP ORDER BY idCP")
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[EV_W] Error leyendo CPs de BD: {e}")
+        return []
 
-def remove_location(ubicacion: str):
-    """Elimina una ubicacion del monitoreo."""
-    if ubicacion in alert_state:
-        del alert_state[ubicacion]
-    if ubicacion in LOCATION_MAPPING:
-        del LOCATION_MAPPING[ubicacion]
-    print(f"[EV_W] Ubicacion eliminada: {ubicacion}")
+def cambiar_ubicacion_cp(id_cp: str, nueva_ubicacion: str, ciudad_openweather: str = None):
+    """Cambia la ubicacion de un CP via API_Central."""
+    try:
+        # Llamar a API_Central para cambiar ubicacion
+        api_url = API_CENTRAL_URL.replace('/weather_alert', '')
+        response = requests.put(
+            f"{api_url}/cp/{id_cp}/ubicacion",
+            json={"ubicacion": nueva_ubicacion},
+            timeout=5
+        )
+
+        result = response.json()
+
+        if result.get("success"):
+            ubicacion_anterior = result.get("ubicacion_anterior", "desconocida")
+            print(f"[EV_W] CP {id_cp}: ubicacion cambiada de '{ubicacion_anterior}' a '{nueva_ubicacion}'")
+
+            # Añadir nueva ubicacion al monitoreo
+            ciudad = ciudad_openweather if ciudad_openweather else nueva_ubicacion
+            alert_state[nueva_ubicacion] = False
+            LOCATION_MAPPING[nueva_ubicacion] = ciudad
+            print(f"[EV_W] Ubicacion '{nueva_ubicacion}' -> Ciudad OpenWeather: '{ciudad}'")
+            print(f"[EV_W] Central actualizada con la nueva ubicacion")
+
+            # Comprobar temperatura inmediatamente
+            print(f"[EV_W] Consultando temperatura de {ciudad}...")
+            if OPENWEATHER_API_KEY:
+                temp = get_temperature_openweather(ciudad)
+            else:
+                temp = get_temperature_simulated(nueva_ubicacion)
+
+            if temp is not None:
+                print(f"[EV_W] Temperatura actual en {ciudad}: {temp}C")
+                if temp < 0:
+                    print(f"[EV_W] ALERTA: Temperatura bajo cero detectada!")
+                    send_alert(nueva_ubicacion, True, temp)
+                    alert_state[nueva_ubicacion] = True
+                else:
+                    print(f"[EV_W] Temperatura normal, cancelando alerta si existia")
+                    send_alert(nueva_ubicacion, False, temp)
+                    alert_state[nueva_ubicacion] = False
+            else:
+                print(f"[EV_W] No se pudo obtener temperatura de {ciudad}")
+
+            return True
+        else:
+            print(f"[EV_W] Error: {result.get('message', 'Error desconocido')}")
+            return False
+
+    except requests.exceptions.ConnectionError:
+        print(f"[EV_W] Error: No se puede conectar a API_Central")
+        print(f"[EV_W] Asegurese de que EV_Central esta ejecutandose")
+        return False
+    except Exception as e:
+        print(f"[EV_W] Error cambiando ubicacion: {e}")
+        return False
 
 def list_locations():
     """Lista ubicaciones monitoreadas."""
@@ -135,42 +192,67 @@ def list_locations():
 
 def menu_interactivo():
     """Menu para gestionar ubicaciones en runtime."""
+    global menu_activo
     while True:
         print("\n--- MENU EV_W ---")
-        print("1 - Anadir ubicacion")
-        print("2 - Eliminar ubicacion")
-        print("3 - Listar ubicaciones")
-        print("4 - Forzar alerta (test)")
-        print("5 - Cancelar alerta (test)")
+        print("1 - Cambiar ubicacion de CP")
+        print("2 - Listar ubicaciones")
+        print("3 - Forzar alerta (test)")
+        print("4 - Cancelar alerta (test)")
         print("Q - Salir del menu")
 
         try:
+            menu_activo = True
             opcion = input("Opcion: ").strip().upper()
+            menu_activo = False
         except (EOFError, KeyboardInterrupt):
+            menu_activo = False
             break
 
         if opcion == "1":
-            ub = input("Nombre ubicacion (ej: Zona-1): ").strip()
-            city = input("Ciudad real para OpenWeather (ej: Madrid): ").strip()
-            if ub:
-                add_location(ub, city if city else None)
+            # Mostrar CPs disponibles
+            cps = get_cps_from_db()
+            if not cps:
+                print("[EV_W] No hay CPs registrados")
+                continue
+
+            print("\n[EV_W] CPs disponibles:")
+            for cp_id, ubicacion in cps:
+                city = LOCATION_MAPPING.get(ubicacion, ubicacion)
+                print(f"   CP {cp_id} -> {ubicacion} (OpenWeather: {city})")
+
+            menu_activo = True
+            id_cp = input("\nNumero de CP a cambiar: ").strip()
+            menu_activo = False
+            if not id_cp:
+                continue
+
+            menu_activo = True
+            nueva_ub = input("Nueva ubicacion: ").strip()
+            menu_activo = False
+            if not nueva_ub:
+                continue
+
+            menu_activo = True
+            ciudad_ow = input(f"Ciudad para OpenWeather (Enter para usar '{nueva_ub}'): ").strip()
+            menu_activo = False
+            cambiar_ubicacion_cp(id_cp, nueva_ub, ciudad_ow if ciudad_ow else None)
 
         elif opcion == "2":
-            ub = input("Ubicacion a eliminar: ").strip()
-            if ub:
-                remove_location(ub)
-
-        elif opcion == "3":
             list_locations()
 
-        elif opcion == "4":
+        elif opcion == "3":
+            menu_activo = True
             ub = input("Ubicacion para forzar alerta: ").strip()
+            menu_activo = False
             if ub:
                 send_alert(ub, True, -5.0)
                 alert_state[ub] = True
 
-        elif opcion == "5":
+        elif opcion == "4":
+            menu_activo = True
             ub = input("Ubicacion para cancelar alerta: ").strip()
+            menu_activo = False
             if ub:
                 send_alert(ub, False, 5.0)
                 alert_state[ub] = False
@@ -215,15 +297,36 @@ def main():
     # Bucle principal de polling
     try:
         while True:
+            # Si el usuario esta escribiendo en el menu, esperar sin imprimir
+            if menu_activo:
+                time.sleep(0.5)
+                continue
+
             # Recargar ubicaciones de BD periodicamente
-            ubicaciones_bd = get_ubicaciones_from_db()
+            ubicaciones_bd = set(get_ubicaciones_from_db())
+
+            # Eliminar ubicaciones que ya no existen en la BD
+            ubicaciones_a_eliminar = [ub for ub in alert_state.keys() if ub not in ubicaciones_bd]
+            for ub in ubicaciones_a_eliminar:
+                del alert_state[ub]
+                if ub in LOCATION_MAPPING:
+                    del LOCATION_MAPPING[ub]
+                if not menu_activo:
+                    print(f"[EV_W] Ubicacion eliminada: {ub}")
+
+            # Añadir nuevas ubicaciones
             for ub in ubicaciones_bd:
                 if ub not in alert_state:
                     alert_state[ub] = False
-                    print(f"[EV_W] Nueva ubicacion detectada: {ub}")
+                    if not menu_activo:
+                        print(f"[EV_W] Nueva ubicacion detectada: {ub}")
 
             # Consultar temperatura de cada ubicacion
             for ubicacion in list(alert_state.keys()):
+                # Salir si el usuario empieza a escribir
+                if menu_activo:
+                    break
+
                 # Obtener ciudad real para OpenWeather
                 city = LOCATION_MAPPING.get(ubicacion, ubicacion)
 
@@ -236,7 +339,8 @@ def main():
                 if temp is None:
                     continue
 
-                print(f"[EV_W] {ubicacion} ({city}): {temp}C")
+                if not menu_activo:
+                    print(f"[EV_W] {ubicacion} ({city}): {temp}C")
 
                 # Logica de alertas
                 current_alert = alert_state.get(ubicacion, False)
