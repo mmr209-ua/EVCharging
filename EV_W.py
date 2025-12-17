@@ -12,10 +12,24 @@ BBDD = "Base_Datos.sqlite"
 API_CENTRAL_URL = "http://localhost:5002/weather_alert"
 OPENWEATHER_URL = "https://api.openweathermap.org/data/2.5/weather"
 POLL_INTERVAL = 4  # segundos
+OPENWEATHER_API_KEY_FILE = "openweather_api_key.txt"
 
-# API Key de OpenWeather (obtener en https://openweathermap.org/api)
-#OPENWEATHER_API_KEY = os.getenv('OPENWEATHER_API_KEY', '')
-OPENWEATHER_API_KEY = 'bb8f440acab5a67c5a3098393be1e5e8'
+def load_api_key():
+    """Lee la API key de OpenWeather desde archivo."""
+    try:
+        key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), OPENWEATHER_API_KEY_FILE)
+        with open(key_path, 'r') as f:
+            api_key = f.read().strip()
+            return api_key if api_key else None
+    except FileNotFoundError:
+        print(f"[EV_W] Archivo {OPENWEATHER_API_KEY_FILE} no encontrado")
+        return None
+    except Exception as e:
+        print(f"[EV_W] Error leyendo API key: {e}")
+        return None
+
+# API Key de OpenWeather (se lee desde archivo)
+OPENWEATHER_API_KEY = load_api_key()
 
 # Cache de estado de alertas por ubicacion
 alert_state: Dict[str, bool] = {}
@@ -261,23 +275,22 @@ def menu_interactivo():
             break
 
 def main():
-    global API_CENTRAL_URL, OPENWEATHER_API_KEY
+    global API_CENTRAL_URL
 
-    # Argumentos opcionales
+    # Argumento opcional para URL de Central
     if len(sys.argv) > 1:
         API_CENTRAL_URL = sys.argv[1]
-    if len(sys.argv) > 2:
-        OPENWEATHER_API_KEY = sys.argv[2]
 
     print("[EV_W] Weather Control Office - Release 2")
     print(f"[EV_W] API Central: {API_CENTRAL_URL}")
+    print(f"[EV_W] API Key leida de: {OPENWEATHER_API_KEY_FILE}")
     print(f"[EV_W] OpenWeather API Key: {'Configurada' if OPENWEATHER_API_KEY else 'NO CONFIGURADA (modo simulacion)'}")
     print(f"[EV_W] Polling cada {POLL_INTERVAL} segundos")
     print("[EV_W] Umbral de alerta: < 0C")
 
     if not OPENWEATHER_API_KEY:
         print("[EV_W] MODO SIMULACION: Las temperaturas seran aleatorias")
-        print("[EV_W] Para usar OpenWeather, configure OPENWEATHER_API_KEY")
+        print(f"[EV_W] Para usar OpenWeather, cree el archivo {OPENWEATHER_API_KEY_FILE} con su API key")
 
     # Cargar ubicaciones iniciales desde BD
     ubicaciones = get_ubicaciones_from_db()

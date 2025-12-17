@@ -123,7 +123,7 @@ function renderCPs(cps) {
             ? '<span class="badge badge-green">SI</span>'
             : '<span class="badge badge-gray">NO</span>';
         const climaBadge = cp.paused_by_weather
-            ? '<span class="badge badge-red">PAUSADO</span>'
+            ? '<span class="badge badge-blue">FUERA DE SERVICIO</span>'
             : '<span class="badge badge-green">OK</span>';
 
         return `

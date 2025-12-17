@@ -214,8 +214,12 @@ def weather_alert():
             VALUES (?, ?, ?)
         """, (ubicacion, temperatura, alert))
 
-        # Obtener CPs en esa ubicacion
-        cps = db_fetchall("SELECT idCP, estado FROM CP WHERE ubicacion = ?", (ubicacion,))
+        # Obtener CPs en esa ubicacion (busqueda case-insensitive)
+        cps = db_fetchall("SELECT idCP, estado FROM CP WHERE LOWER(ubicacion) = LOWER(?)", (ubicacion,))
+
+        print(f"[API_CENTRAL] Buscando CPs en ubicacion '{ubicacion}' -> Encontrados: {len(cps)}")
+        for cp in cps:
+            print(f"[API_CENTRAL]   CP {cp['idCP']} estado={cp['estado']}")
 
         affected_cps = []
 
@@ -227,6 +231,7 @@ def weather_alert():
 
                 # Marcar como pausado por clima
                 db_execute("UPDATE CP SET paused_by_weather = 1 WHERE idCP = ?", (id_cp,))
+                print(f"[API_CENTRAL] CP {id_cp}: paused_by_weather = 1")
 
                 if estado == "SUMINISTRANDO":
                     # No interrumpir suministro activo, solo marcar para parar despues
@@ -243,13 +248,16 @@ def weather_alert():
                             kafka_producer.flush()
                         except Exception as e:
                             print(f"[API_CENTRAL] Error enviando PARAR a Kafka: {e}")
+                else:
+                    # CP en otro estado (DESCONECTADO, PARADO, etc.) - solo marcar paused_by_weather
+                    affected_cps.append({"idCP": id_cp, "action": "WEATHER_FLAGGED", "estado_actual": estado})
 
             print(f"[API_CENTRAL] Alerta ACTIVADA para {ubicacion}: {temperatura}C, CPs afectados: {len(affected_cps)}")
 
         else:
             # Temperatura normal - REANUDAR CPs
-            # Obtener CPs con su estado de pausa por clima
-            cps = db_fetchall("SELECT idCP, estado, paused_by_weather FROM CP WHERE ubicacion = ?", (ubicacion,))
+            # Obtener CPs con su estado de pausa por clima (busqueda case-insensitive)
+            cps = db_fetchall("SELECT idCP, estado, paused_by_weather FROM CP WHERE LOWER(ubicacion) = LOWER(?)", (ubicacion,))
 
             for cp in cps:
                 id_cp = cp["idCP"]
