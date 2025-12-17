@@ -1,7 +1,8 @@
 import threading
 import json
 import time
-from kafka import KafkaProducer, KafkaConsumer
+import uuid
+from kafka import KafkaProducer, KafkaConsumer, TopicPartition
 from EV_Topics import *
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -43,7 +44,7 @@ class EVDriverApp:
     # -----------------------------
     def init_kafka(self):
         """Inicializa conexiones Kafka en segundo plano."""
-        self.log("Conectando con Kafka...")
+        self.root.after(0, lambda: self.log("Conectando con Kafka..."))
         try:
             # Productor
             self.producer = KafkaProducer(
@@ -52,40 +53,60 @@ class EVDriverApp:
             )
 
             # Consumidores
+            session_id = str(uuid.uuid4())[:8]
+
+            # Consumer para lista de CPs - asignacion manual de TODAS las particiones
+            self.consumer_cps = KafkaConsumer(
+                bootstrap_servers=self.broker,
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                auto_offset_reset='latest',
+                enable_auto_commit=False
+            )
+            # Obtener todas las particiones del topic y asignarlas
+            partitions = self.consumer_cps.partitions_for_topic(LISTA_CPS_DISPONIBLES)
+            if partitions:
+                tps = [TopicPartition(LISTA_CPS_DISPONIBLES, p) for p in partitions]
+                self.consumer_cps.assign(tps)
+                # Ir al final de todas las particiones
+                self.consumer_cps.seek_to_end()
+                self.root.after(0, lambda: self.log(f"Escuchando {len(tps)} particion(es) del topic CPs"))
+            else:
+                # Si no existe el topic, asignar particion 0 por defecto
+                tp = TopicPartition(LISTA_CPS_DISPONIBLES, 0)
+                self.consumer_cps.assign([tp])
+                self.consumer_cps.seek_to_end(tp)
+                self.root.after(0, lambda: self.log("Topic CPs no encontrado, usando particion 0"))
+
+            # Otros consumidores con group_id unico
             consumer_config = {
                 'bootstrap_servers': self.broker,
                 'value_deserializer': lambda m: json.loads(m.decode("utf-8")),
-                'auto_offset_reset': 'earliest'
+                'auto_offset_reset': 'latest'
             }
 
-            self.consumer_cps = KafkaConsumer(
-                LISTA_CPS_DISPONIBLES,
-                group_id=f"driver_{self.driver_id}_cps",
-                **consumer_config
-            )
             self.consumer_auth = KafkaConsumer(
                 AUTHORIZE_SUPPLY,
-                group_id=f"driver_{self.driver_id}_auth",
+                group_id=f"driver_{self.driver_id}_auth_{session_id}",
                 **consumer_config
             )
             self.consumer_ticket = KafkaConsumer(
                 DRIVER_SUPPLY_COMPLETE,
-                group_id=f"driver_{self.driver_id}_tickets",
+                group_id=f"driver_{self.driver_id}_tickets_{session_id}",
                 **consumer_config
             )
             self.consumer_consumo = KafkaConsumer(
                 CP_CONSUMPTION,
-                group_id=f"driver_{self.driver_id}_consumo",
+                group_id=f"driver_{self.driver_id}_consumo_{session_id}",
                 **consumer_config
             )
             self.consumer_historial = KafkaConsumer(
                 SUMINISTROS_COMPLETADOS,
-                group_id=f"driver_{self.driver_id}_historial",
+                group_id=f"driver_{self.driver_id}_historial_{session_id}",
                 **consumer_config
             )
 
             self.kafka_ready = True
-            self.log("Conectado a Kafka correctamente")
+            self.root.after(0, lambda: self.log("Conectado a Kafka correctamente"))
 
             # Crear hilos de escucha
             threading.Thread(target=self.listen_cp_disponibles, daemon=True).start()
@@ -99,7 +120,7 @@ class EVDriverApp:
             self.producer.flush()
 
         except Exception as e:
-            self.log(f"Error conectando a Kafka: {e}")
+            self.root.after(0, lambda err=str(e): self.log(f"Error conectando a Kafka: {err}"))
             self.kafka_ready = False
 
     # -----------------------------
@@ -158,11 +179,24 @@ class EVDriverApp:
 
     # Mantenerse a la escucha para ver qué CPs se encuentran disponibles
     def listen_cp_disponibles(self):
-        for msg in self.consumer_cps:
-            data = msg.value
-            if isinstance(data, list):
-                self.cp_disponibles = data
-                self.update_cp_list()
+        self.root.after(0, lambda: self.log("Esperando lista de CPs..."))
+        while True:
+            try:
+                # Poll con timeout de 3 segundos
+                records = self.consumer_cps.poll(timeout_ms=3000)
+                if records:
+                    for tp, messages in records.items():
+                        for msg in messages:
+                            data = msg.value
+                            if isinstance(data, list):
+                                self.cp_disponibles = data
+                                # Actualizar GUI en el hilo principal
+                                self.root.after(0, self.update_cp_list)
+                                if data:
+                                    self.root.after(0, lambda d=data: self.log(f"CPs disponibles: {d}"))
+            except Exception as e:
+                self.root.after(0, lambda err=str(e): self.log(f"Error recibiendo CPs: {err}"))
+                time.sleep(2)
 
     # Mantenerse a la escucha por si llega alguna autorizacion de suministro
     def listen_authorizations(self):
@@ -174,9 +208,9 @@ class EVDriverApp:
             auth = data.get("authorize")
             id_cp = data.get("idCP")
             if auth == "YES":
-                self.log(f"Suministro AUTORIZADO en CP {id_cp}")
+                self.root.after(0, lambda cp=id_cp: self.log(f"Suministro AUTORIZADO en CP {cp}"))
             else:
-                self.log(f"Suministro DENEGADO en CP {id_cp}")
+                self.root.after(0, lambda cp=id_cp: self.log(f"Suministro DENEGADO en CP {cp}"))
                 self.ticket_cp = id_cp
                 self.ticket_event.set() # activar evento para q pase a la siguiente linea del fichero
 
@@ -193,29 +227,29 @@ class EVDriverApp:
 
             # Obtener info del ticket
             id_cp = str(ticket.get("idCP", ""))
-            estado =  str(ticket.get("estado", ""))
+            estado = str(ticket.get("estado", ""))
             motivo = str(ticket.get("motivo", ""))
             energia = ticket.get("energia", 0)
             importe = ticket.get("precio_total", 0)
-            
+
             # Guardar ticket
             self.suministros_completados.append({
                     "idCP": id_cp,
                     "energia": energia,
                     "importe": importe,
-                    "estado":estado, 
+                    "estado": estado,
                 })
-            self.update_completados_table()
-            
+            self.root.after(0, self.update_completados_table)
+
             # Mostrar mensaje pertinente
             if estado == "COMPLETADO":
-                self.log(f"Recarga completada con éxito en CP {id_cp}: {energia:.2f} kWh, {importe:.2f} €")
+                self.root.after(0, lambda cp=id_cp, e=energia, i=importe: self.log(f"Recarga completada con éxito en CP {cp}: {e:.2f} kWh, {i:.2f} €"))
             else:
-                self.log(f"Recarga interrumpida debido a CP {id_cp} {motivo}: {energia:.2f} kWh, {importe:.2f} €")
+                self.root.after(0, lambda cp=id_cp, m=motivo, e=energia, i=importe: self.log(f"Recarga interrumpida en CP {cp} {m}: {e:.2f} kWh, {i:.2f} €"))
 
             # Eliminar la entrada de la tabla de suministrando actualmente
             self.consumo_actual.pop(id_cp, None)
-            self.update_consumo_table()
+            self.root.after(0, self.update_consumo_table)
 
             # Avisar a procesar_servicios() de que llegó el ticket
             self.ticket_cp = id_cp
@@ -232,7 +266,7 @@ class EVDriverApp:
             energia = float(event.get("consumo", 0))
             importe = float(event.get("importe", 0))
             self.consumo_actual[id_cp] = {"energia": energia, "importe": importe}
-            self.update_consumo_table()
+            self.root.after(0, self.update_consumo_table)
 
     # Mantenerse a la escucha para obtener datos acerca de los suministros completados
     def listen_historial(self):
@@ -252,7 +286,7 @@ class EVDriverApp:
                 }
                 for r in propios
             ]
-            self.update_completados_table()
+            self.root.after(0, self.update_completados_table)
 
     # -----------------------------------------------------------
     # LÓGICA GENERAL PARA REFRESCAR LAS DISTINTAS PANTALLAS
@@ -332,25 +366,25 @@ class EVDriverApp:
                     # Si el ticket era de otro CP, sigue esperando
                     self.ticket_event.clear()
 
-            self.log(f"Pasando al siguiente servicio...\n")
+            self.root.after(0, lambda: self.log("Pasando al siguiente servicio...\n"))
 
             # Esperar 4 segundos antes de pasar al siguiente CP
             time.sleep(4)
 
-        self.log("Suministros finalizados.")
+        self.root.after(0, lambda: self.log("Suministros finalizados."))
 
     # Solicitar suministro a Central para un CP concreto del fichero
     def enviar_solicitud(self, cp_id):
         if not self.kafka_ready or not self.producer:
-            self.log("Kafka no esta conectado. Espera un momento...")
+            self.root.after(0, lambda: self.log("Kafka no esta conectado. Espera un momento..."))
             return
         try:
             request = {"idDriver": self.driver_id, "idCP": cp_id}
             self.producer.send(SUPPLY_REQUEST_TO_CENTRAL, request)
             self.producer.flush()
-            self.log(f"Solicitud de suministro enviada a Central para CP {cp_id}")
+            self.root.after(0, lambda cp=cp_id: self.log(f"Solicitud de suministro enviada a Central para CP {cp}"))
         except Exception as e:
-            self.log("Imposible conectar con la CENTRAL.")
+            self.root.after(0, lambda: self.log("Imposible conectar con la CENTRAL."))
 
 # -----------------------------
 # Main

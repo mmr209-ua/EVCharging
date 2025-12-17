@@ -1,8 +1,8 @@
 {
   "idCP": "1",
-  "authToken": "2f069c0e-8938-400c-ba8d-899e76949b70",
+  "authToken": null,
   "precio": 0.3,
-  "ubicacion": "Toronto",
-  "authenticated": true,
-  "encryption_key": "fM6P5Nz4a5sDziyC53ndXcj8ujew2ZvvTrwi9YI7k1g="
+  "ubicacion": "Madrid",
+  "authenticated": false,
+  "encryption_key": null
 }

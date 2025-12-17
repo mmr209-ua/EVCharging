@@ -545,8 +545,15 @@ def enviar_lista_cps_disponibles(producer):
         try:
             with sqlite3.connect(BBDD) as conn:
                 cur = conn.cursor()
+                # Debug: mostrar todos los CPs y sus estados
+                cur.execute("SELECT idCP, estado, paused_by_weather FROM CP")
+                todos_cps = cur.fetchall()
+                if todos_cps:
+                    safe_log(f"[CENTRAL][DEBUG] Estado de todos los CPs: {[(cp[0], cp[1], 'clima' if cp[2] else 'ok') for cp in todos_cps]}")
+
                 cur.execute("SELECT idCP FROM CP WHERE estado = 'ACTIVADO' AND paused_by_weather = 0")
                 cps = [row[0] for row in cur.fetchall()]
+            safe_log(f"[CENTRAL] Enviando lista de CPs disponibles: {cps}")
             producer.send(LISTA_CPS_DISPONIBLES, cps)
             producer.flush()
         except Exception as e:
