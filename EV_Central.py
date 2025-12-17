@@ -707,7 +707,22 @@ class CentralGUI(tk.Tk):
             return
         try:
             with sqlite3.connect(BBDD) as conn:
-                db_execute(conn, "UPDATE CP SET estado = ?, paused_by_weather = 0 WHERE idCP = ?", ("ACTIVADO", id_cp))
+                # Verificar estado actual y alerta de clima
+                cur = conn.cursor()
+                cur.execute("SELECT estado, paused_by_weather FROM CP WHERE idCP = ?", (id_cp,))
+                row = cur.fetchone()
+                if not row:
+                    self.log(f"[CENTRAL][GUI] CP {id_cp} no encontrado")
+                    return
+                estado, paused_by_weather = row[0], row[1]
+                if paused_by_weather:
+                    self.log(f"[CENTRAL][GUI] CP {id_cp} tiene alerta de clima. No puede reanudarse.")
+                    return
+                if estado != 'PARADO':
+                    self.log(f"[CENTRAL][GUI] CP {id_cp} no puede reanudarse (estado: {estado})")
+                    return
+                # Solo reanudar si esta PARADO y sin alerta de clima
+                db_execute(conn, "UPDATE CP SET estado = 'ACTIVADO' WHERE idCP = ? AND estado = 'PARADO' AND paused_by_weather = 0", (id_cp,))
             self.producer.send(CP_CONTROL, {"accion": "REANUDAR", "idCP": id_cp})
             self.producer.flush()
             self.log(f"[CENTRAL] Orden REANUDAR enviada a CP {id_cp}")
@@ -731,10 +746,11 @@ class CentralGUI(tk.Tk):
     def reanudar_todos(self):
         try:
             with sqlite3.connect(BBDD) as conn:
-                db_execute(conn, "UPDATE CP SET estado = 'ACTIVADO', paused_by_weather = 0")
+                # Solo reanudar CPs PARADOS y sin alerta de clima activa
+                db_execute(conn, "UPDATE CP SET estado = 'ACTIVADO' WHERE estado = 'PARADO' AND paused_by_weather = 0")
             self.producer.send(CP_CONTROL, {"accion": "REANUDAR", "idCP": "todos"})
             self.producer.flush()
-            self.log("[CENTRAL] Enviada orden REANUDAR a TODOS")
+            self.log("[CENTRAL] Enviada orden REANUDAR a CPs PARADOS sin alerta de clima")
             log_audit('CONTROL_ORDER', 'localhost', 'ALL', 'REANUDAR', {'source': 'GUI'}, 'SUCCESS')
             actualizar_pantalla.set()
         except Exception as e:

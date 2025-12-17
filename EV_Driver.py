@@ -15,70 +15,92 @@ class EVDriverApp:
         self.cp_disponibles = []
         self.consumo_actual = {}  # {idCP: {"energia": x, "importe": y}}
         self.current_cp = None
+        self.kafka_ready = False
 
-        # Productor
-        self.producer = KafkaProducer(
-            bootstrap_servers=self.broker,
-            value_serializer=lambda v: json.dumps(v).encode("utf-8")
-        )
+        # Inicializar referencias a None
+        self.producer = None
+        self.consumer_cps = None
+        self.consumer_auth = None
+        self.consumer_ticket = None
+        self.consumer_consumo = None
+        self.consumer_historial = None
 
-        # Consumidores
-        self.consumer_cps = KafkaConsumer(
-            LISTA_CPS_DISPONIBLES,
-            bootstrap_servers=self.broker,
-            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id=f"driver_{driver_id}_cps",
-            auto_offset_reset='earliest'
-        )
-        self.consumer_auth = KafkaConsumer(
-            AUTHORIZE_SUPPLY,
-            bootstrap_servers=self.broker,
-            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id=f"driver_{driver_id}_auth",
-            auto_offset_reset='earliest'
-        )
-        self.consumer_ticket = KafkaConsumer(
-            DRIVER_SUPPLY_COMPLETE,
-            bootstrap_servers=self.broker,
-            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id=f"driver_{driver_id}_tickets",
-            auto_offset_reset='earliest'
-        )
-        self.consumer_consumo = KafkaConsumer(
-            CP_CONSUMPTION,
-            bootstrap_servers=self.broker,
-            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id=f"driver_{driver_id}_consumo",
-            auto_offset_reset='earliest'
-        )
-        self.consumer_historial = KafkaConsumer(
-            SUMINISTROS_COMPLETADOS,
-            bootstrap_servers=self.broker,
-            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            group_id=f"driver_{driver_id}_historial",
-            auto_offset_reset='earliest'
-        )
-
-        # Crear interfaz
-        self.create_ui()
-
-        # Crear hilos de escucha
-        threading.Thread(target=self.listen_cp_disponibles, daemon=True).start()
-        threading.Thread(target=self.listen_authorizations, daemon=True).start()
-        threading.Thread(target=self.listen_tickets, daemon=True).start()
-        threading.Thread(target=self.listen_consumption, daemon=True).start()
-        threading.Thread(target=self.listen_historial, daemon=True).start()
-                
         # Definimos un evento para saber si nos ha llegado el ticket de un suministro finalizado
         self.ticket_event = threading.Event()
         self.ticket_cp = None
 
         # Definimos una lista para los suministros completados
-        self.suministros_completados = [] 
+        self.suministros_completados = []
 
-        # Al arrancar, driver le pide a central su historial de suministros completados
-        self.producer.send(SUPPLY_HISTORY, {"idDriver": self.driver_id})
-        self.producer.flush() 
+        # Crear interfaz PRIMERO (para que la ventana aparezca)
+        self.create_ui()
+
+        # Inicializar Kafka en segundo plano
+        threading.Thread(target=self.init_kafka, daemon=True).start() 
+
+    # -----------------------------
+    # INICIALIZACION KAFKA (en segundo plano)
+    # -----------------------------
+    def init_kafka(self):
+        """Inicializa conexiones Kafka en segundo plano."""
+        self.log("Conectando con Kafka...")
+        try:
+            # Productor
+            self.producer = KafkaProducer(
+                bootstrap_servers=self.broker,
+                value_serializer=lambda v: json.dumps(v).encode("utf-8")
+            )
+
+            # Consumidores
+            consumer_config = {
+                'bootstrap_servers': self.broker,
+                'value_deserializer': lambda m: json.loads(m.decode("utf-8")),
+                'auto_offset_reset': 'earliest'
+            }
+
+            self.consumer_cps = KafkaConsumer(
+                LISTA_CPS_DISPONIBLES,
+                group_id=f"driver_{self.driver_id}_cps",
+                **consumer_config
+            )
+            self.consumer_auth = KafkaConsumer(
+                AUTHORIZE_SUPPLY,
+                group_id=f"driver_{self.driver_id}_auth",
+                **consumer_config
+            )
+            self.consumer_ticket = KafkaConsumer(
+                DRIVER_SUPPLY_COMPLETE,
+                group_id=f"driver_{self.driver_id}_tickets",
+                **consumer_config
+            )
+            self.consumer_consumo = KafkaConsumer(
+                CP_CONSUMPTION,
+                group_id=f"driver_{self.driver_id}_consumo",
+                **consumer_config
+            )
+            self.consumer_historial = KafkaConsumer(
+                SUMINISTROS_COMPLETADOS,
+                group_id=f"driver_{self.driver_id}_historial",
+                **consumer_config
+            )
+
+            self.kafka_ready = True
+            self.log("Conectado a Kafka correctamente")
+
+            # Crear hilos de escucha
+            threading.Thread(target=self.listen_cp_disponibles, daemon=True).start()
+            threading.Thread(target=self.listen_authorizations, daemon=True).start()
+            threading.Thread(target=self.listen_tickets, daemon=True).start()
+            threading.Thread(target=self.listen_consumption, daemon=True).start()
+            threading.Thread(target=self.listen_historial, daemon=True).start()
+
+            # Pedir historial de suministros
+            self.producer.send(SUPPLY_HISTORY, {"idDriver": self.driver_id})
+            self.producer.flush()
+
+        except Exception as e:
+            self.log(f"Error conectando a Kafka: {e}")
+            self.kafka_ready = False
 
     # -----------------------------
     # GUI TKINTER
@@ -319,6 +341,9 @@ class EVDriverApp:
 
     # Solicitar suministro a Central para un CP concreto del fichero
     def enviar_solicitud(self, cp_id):
+        if not self.kafka_ready or not self.producer:
+            self.log("Kafka no esta conectado. Espera un momento...")
+            return
         try:
             request = {"idDriver": self.driver_id, "idCP": cp_id}
             self.producer.send(SUPPLY_REQUEST_TO_CENTRAL, request)

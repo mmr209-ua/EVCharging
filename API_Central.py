@@ -494,10 +494,15 @@ def reanudar_cp(id_cp):
             return jsonify({"success": False, "error": "CP no encontrado"}), 404
 
         estado_actual = rows[0]['estado']
+        paused_by_weather = rows[0]['paused_by_weather']
+
+        if paused_by_weather:
+            return jsonify({"success": False, "error": "CP tiene alerta de clima activa. No puede reanudarse hasta que la temperatura suba."}), 400
+
         if estado_actual not in ('PARADO',):
             return jsonify({"success": False, "error": f"CP no puede reanudarse desde estado {estado_actual}"}), 400
 
-        db_execute("UPDATE CP SET estado = 'ACTIVADO', paused_by_weather = 0 WHERE idCP = ?", (id_cp,))
+        db_execute("UPDATE CP SET estado = 'ACTIVADO' WHERE idCP = ?", (id_cp,))
 
         # Enviar orden via Kafka
         if kafka_producer:
@@ -541,12 +546,12 @@ def parar_todos_cps():
 
 @app.route('/cp/reanudar_todos', methods=['POST'])
 def reanudar_todos_cps():
-    """Reanuda todos los CPs (igual que boton GUI de Central)."""
+    """Reanuda todos los CPs que estan PARADOS y sin alerta de clima."""
     try:
-        # Actualizar TODOS los CPs a ACTIVADO y quitar pausa por clima (igual que GUI)
-        db_execute("UPDATE CP SET estado = 'ACTIVADO', paused_by_weather = 0")
+        # Solo reanudar CPs en estado PARADO y sin alerta de clima activa
+        db_execute("UPDATE CP SET estado = 'ACTIVADO' WHERE estado = 'PARADO' AND paused_by_weather = 0")
 
-        # Enviar UN solo mensaje Kafka con idCP="todos" (igual que GUI)
+        # Enviar mensaje Kafka
         if kafka_producer:
             try:
                 kafka_producer.send("CP_CONTROL", {"accion": "REANUDAR", "idCP": "todos"})
