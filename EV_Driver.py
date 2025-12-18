@@ -37,7 +37,7 @@ class EVDriverApp:
         self.create_ui()
 
         # Inicializar Kafka en segundo plano
-        threading.Thread(target=self.init_kafka, daemon=True).start() 
+        threading.Thread(target=self.init_kafka, daemon=True).start()
 
     # -----------------------------
     # INICIALIZACION KAFKA (en segundo plano)
@@ -291,7 +291,7 @@ class EVDriverApp:
     # -----------------------------------------------------------
     # LÓGICA GENERAL PARA REFRESCAR LAS DISTINTAS PANTALLAS
     # -----------------------------------------------------------
-    
+
     # CPs disponibles
     def update_cp_list(self):
         self.lista_cp.delete(0, tk.END)

@@ -128,6 +128,20 @@ def send_alert(ubicacion: str, alert: bool, temperatura: float):
     except Exception as e:
         print(f"[EV_W] Error enviando alerta: {e}")
 
+def send_temperature_update(ubicacion: str, temperatura: float, alert_active: bool):
+    """Envia actualizacion de temperatura a API_Central (siempre, no solo alertas)."""
+    try:
+        payload = {
+            "ubicacion": ubicacion,
+            "alert": alert_active,
+            "temperatura": temperatura
+        }
+        response = requests.post(API_CENTRAL_URL, json=payload, timeout=5)
+        response.raise_for_status()
+    except Exception as e:
+        if not menu_activo:
+            print(f"[EV_W] Error enviando temperatura de {ubicacion}: {e}")
+
 def get_cps_from_db():
     """Obtiene lista de CPs con su ubicacion desde BD."""
     try:
@@ -208,6 +222,10 @@ def menu_interactivo():
     """Menu para gestionar ubicaciones en runtime."""
     global menu_activo
     while True:
+        # Desactivar menu para permitir polling mientras se muestra el menu
+        menu_activo = False
+        time.sleep(0.1)  # Dar tiempo al polling para ejecutar
+
         print("\n--- MENU EV_W ---")
         print("1 - Cambiar ubicacion de CP")
         print("2 - Listar ubicaciones")
@@ -216,12 +234,12 @@ def menu_interactivo():
         print("Q - Salir del menu")
 
         try:
-            menu_activo = True
             opcion = input("Opcion: ").strip().upper()
-            menu_activo = False
         except (EOFError, KeyboardInterrupt):
-            menu_activo = False
             break
+
+        # Activar menu durante TODA la ejecucion de la opcion
+        menu_activo = True
 
         if opcion == "1":
             # Mostrar CPs disponibles
@@ -235,43 +253,34 @@ def menu_interactivo():
                 city = LOCATION_MAPPING.get(ubicacion, ubicacion)
                 print(f"   CP {cp_id} -> {ubicacion} (OpenWeather: {city})")
 
-            menu_activo = True
             id_cp = input("\nNumero de CP a cambiar: ").strip()
-            menu_activo = False
             if not id_cp:
                 continue
 
-            menu_activo = True
             nueva_ub = input("Nueva ubicacion: ").strip()
-            menu_activo = False
             if not nueva_ub:
                 continue
 
-            menu_activo = True
             ciudad_ow = input(f"Ciudad para OpenWeather (Enter para usar '{nueva_ub}'): ").strip()
-            menu_activo = False
             cambiar_ubicacion_cp(id_cp, nueva_ub, ciudad_ow if ciudad_ow else None)
 
         elif opcion == "2":
             list_locations()
 
         elif opcion == "3":
-            menu_activo = True
             ub = input("Ubicacion para forzar alerta: ").strip()
-            menu_activo = False
             if ub:
                 send_alert(ub, True, -5.0)
                 alert_state[ub] = True
 
         elif opcion == "4":
-            menu_activo = True
             ub = input("Ubicacion para cancelar alerta: ").strip()
-            menu_activo = False
             if ub:
                 send_alert(ub, False, 5.0)
                 alert_state[ub] = False
 
         elif opcion == "Q":
+            menu_activo = False
             break
 
 def main():
@@ -310,10 +319,9 @@ def main():
     # Bucle principal de polling
     try:
         while True:
-            # Si el usuario esta escribiendo en el menu, esperar sin imprimir
-            if menu_activo:
+            # Si el usuario esta en el menu, esperar completamente
+            while menu_activo:
                 time.sleep(0.5)
-                continue
 
             # Recargar ubicaciones de BD periodicamente
             ubicaciones_bd = set(get_ubicaciones_from_db())
@@ -331,8 +339,10 @@ def main():
             for ub in ubicaciones_bd:
                 if ub not in alert_state:
                     alert_state[ub] = False
+                    # Determinar ciudad para OpenWeather
+                    city = LOCATION_MAPPING.get(ub, ub)
                     if not menu_activo:
-                        print(f"[EV_W] Nueva ubicacion detectada: {ub}")
+                        print(f"[EV_W] Nueva ubicacion detectada: {ub} (OpenWeather: {city})")
 
             # Consultar temperatura de cada ubicacion
             for ubicacion in list(alert_state.keys()):
@@ -352,9 +362,6 @@ def main():
                 if temp is None:
                     continue
 
-                if not menu_activo:
-                    print(f"[EV_W] {ubicacion} ({city}): {temp}C")
-
                 # Logica de alertas
                 current_alert = alert_state.get(ubicacion, False)
 
@@ -367,6 +374,10 @@ def main():
                     # Cancelar alerta: temperatura normal
                     send_alert(ubicacion, False, temp)
                     alert_state[ubicacion] = False
+
+                else:
+                    # Siempre enviar temperatura para que aparezca en el dashboard
+                    send_temperature_update(ubicacion, temp, current_alert)
 
             time.sleep(POLL_INTERVAL)
 

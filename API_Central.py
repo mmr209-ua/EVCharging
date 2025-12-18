@@ -324,14 +324,24 @@ def get_audit():
 def get_weather_status():
     """
     Obtiene el estado actual del clima por ubicacion.
+    Incluye TODAS las ubicaciones de CPs, aunque no tengan datos de clima.
     """
+    # Obtener todas las ubicaciones unicas de CPs
     rows = db_fetchall("""
-        SELECT ubicacion, temperatura, alert_active, timestamp
-        FROM WEATHER_ALERTS
-        WHERE id IN (
-            SELECT MAX(id) FROM WEATHER_ALERTS GROUP BY ubicacion
-        )
-        ORDER BY ubicacion
+        SELECT DISTINCT
+            cp.ubicacion,
+            w.temperatura,
+            COALESCE(w.alert_active, 0) as alert_active,
+            w.timestamp
+        FROM CP cp
+        LEFT JOIN (
+            SELECT ubicacion, temperatura, alert_active, timestamp
+            FROM WEATHER_ALERTS
+            WHERE id IN (
+                SELECT MAX(id) FROM WEATHER_ALERTS GROUP BY ubicacion
+            )
+        ) w ON LOWER(cp.ubicacion) = LOWER(w.ubicacion)
+        ORDER BY cp.ubicacion
     """)
 
     return jsonify(rows), 200
