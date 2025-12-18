@@ -597,6 +597,150 @@ def restaurar_claves():
         return jsonify({"success": False, "error": str(e)}), 500
 
 # ======================================================================
+# ENDPOINTS PARA EV_REGISTRY (permite que Registry opere sin BD local)
+# ======================================================================
+
+@app.route('/registry/register', methods=['POST'])
+def registry_register_cp():
+    """
+    Registra un CP en la BD (llamado desde EV_Registry).
+
+    Request JSON:
+    {
+        "idCP": "1",
+        "precio": 0.30,
+        "ubicacion": "Madrid",
+        "auth_token": "uuid-token..."
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data or 'idCP' not in data:
+            return jsonify({"error": True, "message": "Datos incompletos"}), 400
+
+        id_cp = str(data.get("idCP"))
+        precio = float(data.get("precio", 0.30))
+        ubicacion = data.get("ubicacion", f"Zona-{id_cp}")
+        auth_token = data.get("auth_token", "")
+
+        # Insertar/Actualizar en la tabla CP
+        success = db_execute("""
+            INSERT INTO CP (idCP, estado, precio, ubicacion, auth_token, authenticated)
+            VALUES (?, ?, ?, ?, ?, 0)
+            ON CONFLICT(idCP) DO UPDATE SET
+                precio=excluded.precio,
+                ubicacion=excluded.ubicacion,
+                auth_token=excluded.auth_token,
+                authenticated=0,
+                estado='DESCONECTADO'
+        """, (id_cp, 'DESCONECTADO', precio, ubicacion, auth_token))
+
+        if success:
+            print(f"[API_CENTRAL] CP {id_cp} registrado via Registry")
+            log_audit('REGISTER', request.remote_addr, id_cp, 'CP_REGISTER_VIA_REGISTRY',
+                     {'precio': precio, 'ubicacion': ubicacion}, 'SUCCESS')
+            trigger_pantalla_update()
+            return jsonify({"error": False, "message": f"CP {id_cp} registrado"}), 201
+        else:
+            return jsonify({"error": True, "message": "Error guardando en BD"}), 500
+
+    except Exception as e:
+        print(f"[API_CENTRAL] Error en registry/register: {e}")
+        return jsonify({"error": True, "message": str(e)}), 500
+
+@app.route('/registry/unregister/<id_cp>', methods=['DELETE'])
+def registry_unregister_cp(id_cp):
+    """
+    Da de baja un CP de la BD (llamado desde EV_Registry).
+    """
+    try:
+        id_cp = str(id_cp)
+
+        # Verificar que el CP existe
+        rows = db_fetchall("SELECT idCP FROM CP WHERE idCP = ?", (id_cp,))
+        if not rows:
+            return jsonify({"error": True, "message": "CP no encontrado"}), 404
+
+        # Eliminar CP
+        success = db_execute("DELETE FROM CP WHERE idCP = ?", (id_cp,))
+
+        if success:
+            print(f"[API_CENTRAL] CP {id_cp} dado de baja via Registry")
+            log_audit('UNREGISTER', request.remote_addr, id_cp, 'CP_UNREGISTER_VIA_REGISTRY',
+                     {}, 'SUCCESS')
+            trigger_pantalla_update()
+            return jsonify({"error": False, "message": f"CP {id_cp} eliminado"}), 200
+        else:
+            return jsonify({"error": True, "message": "Error eliminando de BD"}), 500
+
+    except Exception as e:
+        print(f"[API_CENTRAL] Error en registry/unregister: {e}")
+        return jsonify({"error": True, "message": str(e)}), 500
+
+@app.route('/registry/status/<id_cp>', methods=['GET'])
+def registry_get_cp_status(id_cp):
+    """
+    Obtiene estado de un CP (llamado desde EV_Registry).
+    """
+    try:
+        rows = db_fetchall("""
+            SELECT idCP, estado, precio, ubicacion, authenticated
+            FROM CP WHERE idCP = ?
+        """, (id_cp,))
+
+        if not rows:
+            return jsonify({"error": True, "message": "CP no encontrado"}), 404
+
+        cp = rows[0]
+        return jsonify({
+            "error": False,
+            "cp": {
+                "idCP": cp["idCP"],
+                "estado": cp["estado"],
+                "precio": cp["precio"],
+                "ubicacion": cp["ubicacion"],
+                "authenticated": bool(cp["authenticated"])
+            }
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": True, "message": str(e)}), 500
+
+@app.route('/audit/log', methods=['POST'])
+def audit_log_entry():
+    """
+    Registra un evento de auditoria (llamado desde EV_Registry u otros).
+
+    Request JSON:
+    {
+        "event_type": "REGISTER",
+        "source_ip": "192.168.1.100",
+        "source_id": "1",
+        "action": "CP_REGISTER",
+        "parameters": {"precio": 0.30},
+        "result": "SUCCESS"
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": True, "message": "Datos requeridos"}), 400
+
+        log_audit(
+            data.get("event_type", "UNKNOWN"),
+            data.get("source_ip", request.remote_addr),
+            data.get("source_id", "unknown"),
+            data.get("action", "UNKNOWN"),
+            data.get("parameters", {}),
+            data.get("result", "UNKNOWN")
+        )
+
+        return jsonify({"success": True}), 200
+
+    except Exception as e:
+        return jsonify({"error": True, "message": str(e)}), 500
+
+# ======================================================================
 # MAIN (standalone mode)
 # ======================================================================
 

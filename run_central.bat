@@ -1,44 +1,32 @@
 @echo off
 cd /d %~dp0
-title EVCharging
+title EVCharging - PC 1 (CENTRAL)
 color 0A
 echo ==========================================
 echo        EVCharging - Release 2
+echo        PC 1: Kafka + Central + API + Web
 echo ==========================================
 echo.
 
-REM ==== CONFIGURACION GENERAL ====
+REM ==== CONFIGURACION - MODIFICAR SEGUN TU RED ====
 set BROKER=192.168.24.1:9092
 set CENTRAL_IP=192.168.24.1
 set CENTRAL_PORT=9098
 set DB_HOST=192.168.24.1
-
-REM ==== CONFIGURACION API Y WEB ====
-set REGISTRY_IP=192.168.1.10
-set REGISTRY_URL=https://%REGISTRY_IP%:5001
 set API_PORT=5002
 set WEB_PORT=3000
-
-REM ==== CONFIGURACION DE CPs ====
-set CP1_ID=1
-set CP1_ENGINE_PORT=7001
 
 REM ==== INICIALIZAR BASE DE DATOS ====
 echo [DB] Inicializando Base de Datos...
 py EV_DB.py
 timeout /t 1 >nul
 
-REM ==== ARRANQUE CENTRAL ====
+REM ==== ARRANQUE CENTRAL (incluye API_Central internamente) ====
 echo.
-echo [CENTRAL] Iniciando Central en puerto %CENTRAL_PORT% (API en %API_PORT%)...
+echo [CENTRAL] Iniciando Central en puerto %CENTRAL_PORT%...
+echo [CENTRAL] API_Central se inicia automaticamente en puerto %API_PORT%
 start cmd /k "title CENTRAL && color 0E && py EV_Central.py %CENTRAL_PORT% %BROKER% %DB_HOST%"
-timeout /t 3 >nul
-
-REM ==== ARRANQUE API CENTRAL ====
-echo.
-echo [API_CENTRAL] Iniciando API CENTRAL...
-start cmd /k "title API_CENTRAL && color 0D && py API_Central.py"
-timeout /t 2 >nul
+timeout /t 5 >nul
 
 REM ==== ARRANQUE WEB DASHBOARD ====
 echo.
@@ -51,6 +39,18 @@ if not exist "node_modules" (
 start cmd /k "title WEB_DASHBOARD && color 07 && npm start"
 cd ..
 timeout /t 2 >nul
+
+echo.
+echo ==========================================
+echo   PC 1 (CENTRAL) iniciado correctamente
+echo ==========================================
+echo   - Kafka Broker: %BROKER%
+echo   - Central TCP: puerto %CENTRAL_PORT%
+echo   - API_Central: puerto %API_PORT%
+echo   - Web Dashboard: puerto %WEB_PORT%
+echo   - Base de Datos: local
+echo ==========================================
+echo.
 
 choice /C SN /M "Abrir Dashboard en navegador?"
 if %errorlevel%==1 start http://localhost:%WEB_PORT%

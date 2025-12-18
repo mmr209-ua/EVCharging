@@ -1,60 +1,59 @@
 @echo off
 cd /d %~dp0
-title EVCharging
+title EVCharging - PC 3 (Driver + Registry)
 color 0A
 echo ==========================================
 echo        EVCharging - Release 2
+echo        PC 3: Driver + Registry
 echo ==========================================
 echo.
 
-REM ==== CONFIGURACION GENERAL ====
-set BROKER=192.168.24.1:9092
-set CENTRAL_PORT=9098
-set DB_HOST=192.168.24.1
+REM ==== CONFIGURACION - MODIFICAR SEGUN TU RED ====
+REM IP del PC 1 donde corre Central/Kafka/API
+set PC1_IP=192.168.24.1
+set API_CENTRAL_PORT=5002
 
-REM ==== CONFIGURACION API Y WEB ====
-set REGISTRY_IP=192.168.1.10
-set REGISTRY_URL=https://%REGISTRY_IP%:5001
-set API_PORT=5002
-set WEB_PORT=3000
+REM Broker Kafka (en PC 1)
+set BROKER=%PC1_IP%:9092
 
-REM ==== CONFIGURACION DE CPs ====
-set CP1_ID=1
-set CP1_ENGINE_PORT=7001
+REM URL de API_Central (en PC 1) - para Registry
+set API_CENTRAL_URL=http://%PC1_IP%:%API_CENTRAL_PORT%
 
 REM ==== CONFIGURACION DE DRIVERS ====
 set DRIVER1_ID=101
 
-REM ==== INICIALIZAR BASE DE DATOS ====
-echo [DB] Inicializando Base de Datos...
-py EV_DB.py
-timeout /t 1 >nul
+echo.
+echo ==========================================
+echo   Conexiones configuradas:
+echo   - Broker Kafka: %BROKER%
+echo   - API_Central: %API_CENTRAL_URL%
+echo ==========================================
+echo.
 
 REM ==== ARRANQUE REGISTRY ====
-echo.
-echo [REGISTRY] Iniciando Registry...
-start cmd /k "title REGISTRY && color 0D && py EV_Registry.py"
+echo [REGISTRY] Iniciando Registry (HTTPS en puerto 5001)...
+echo [REGISTRY] Conectara con API_Central en %API_CENTRAL_URL%
+start cmd /k "title REGISTRY && color 0D && py EV_Registry.py %API_CENTRAL_URL%"
 timeout /t 3 >nul
 
 REM ==== ARRANQUE DRIVER ====
 echo.
-echo [DRIVER %DRIVER1_ID%] Iniciando...
+echo [DRIVER %DRIVER1_ID%] Iniciando Driver %DRIVER1_ID%...
+echo [DRIVER %DRIVER1_ID%] Conectara con Kafka en %BROKER%
 start cmd /k "title DRIVER_%DRIVER1_ID% && color 03 && py EV_Driver.py %BROKER% %DRIVER1_ID%"
-
-REM ==== ARRANQUE WEB DASHBOARD ====
-echo.
-echo [WEB] Iniciando Dashboard...
-cd web_dashboard
-if not exist "node_modules" (
-    echo      Instalando dependencias npm...
-    call npm install
-)
-start cmd /k "title WEB_DASHBOARD && color 07 && npm start"
-cd ..
 timeout /t 2 >nul
 
-choice /C SN /M "Abrir Dashboard en navegador?"
-if %errorlevel%==1 start http://localhost:%WEB_PORT%
+echo.
+echo ==========================================
+echo   PC 3 (Driver + Registry) iniciado
+echo ==========================================
+echo   - Registry HTTPS: puerto 5001
+echo   - Driver ID: %DRIVER1_ID%
+echo.
+echo   Registry conecta con API_Central en PC 1
+echo   Driver conecta con Kafka en PC 1
+echo ==========================================
+echo.
 
 pause
 exit

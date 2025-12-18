@@ -1,15 +1,15 @@
 # EV_W.py - Weather Control Office (Release 2)
 # Consulta OpenWeather API y notifica alertas a Central
+# NO accede a la BD directamente - usa API_Central
 
 import requests
 import time
-import sqlite3
 import sys
 import os
 from typing import Dict, List
 
-BBDD = "Base_Datos.sqlite"
-API_CENTRAL_URL = "http://localhost:5002/weather_alert"
+# URL base de API_Central (se puede configurar por argumento)
+API_CENTRAL_BASE = "http://localhost:5002"
 OPENWEATHER_URL = "https://api.openweathermap.org/data/2.5/weather"
 POLL_INTERVAL = 4  # segundos
 OPENWEATHER_API_KEY_FILE = "openweather_api_key.txt"
@@ -40,15 +40,39 @@ LOCATION_MAPPING: Dict[str, str] = {}
 # Flag para indicar si el usuario esta escribiendo en el menu
 menu_activo = False
 
-def get_ubicaciones_from_db() -> List[str]:
-    """Obtiene ubicaciones unicas de CPs desde BD."""
+def get_ubicaciones_from_api() -> List[str]:
+    """Obtiene ubicaciones unicas de CPs desde API_Central."""
     try:
-        with sqlite3.connect(BBDD) as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT DISTINCT ubicacion FROM CP")
-            return [row[0] for row in cur.fetchall()]
+        response = requests.get(f"{API_CENTRAL_BASE}/cps", timeout=5)
+        response.raise_for_status()
+        cps = response.json()
+        # Extraer ubicaciones unicas
+        ubicaciones = list(set(cp.get("ubicacion", "") for cp in cps if cp.get("ubicacion")))
+        return ubicaciones
+    except requests.exceptions.ConnectionError:
+        if not menu_activo:
+            print(f"[EV_W] Error: No se puede conectar a API_Central ({API_CENTRAL_BASE})")
+        return []
     except Exception as e:
-        print(f"[EV_W] Error leyendo ubicaciones de BD: {e}")
+        if not menu_activo:
+            print(f"[EV_W] Error obteniendo ubicaciones de API: {e}")
+        return []
+
+def get_cps_from_api() -> List[tuple]:
+    """Obtiene lista de CPs con su ubicacion desde API_Central."""
+    try:
+        response = requests.get(f"{API_CENTRAL_BASE}/cps", timeout=5)
+        response.raise_for_status()
+        cps = response.json()
+        # Retornar como lista de tuplas (idCP, ubicacion)
+        return [(cp.get("idCP"), cp.get("ubicacion", "")) for cp in cps]
+    except requests.exceptions.ConnectionError:
+        if not menu_activo:
+            print(f"[EV_W] Error: No se puede conectar a API_Central ({API_CENTRAL_BASE})")
+        return []
+    except Exception as e:
+        if not menu_activo:
+            print(f"[EV_W] Error obteniendo CPs de API: {e}")
         return []
 
 def get_temperature_openweather(city: str) -> float:
@@ -114,7 +138,7 @@ def send_alert(ubicacion: str, alert: bool, temperatura: float):
             "alert": alert,
             "temperatura": temperatura
         }
-        response = requests.post(API_CENTRAL_URL, json=payload, timeout=5)
+        response = requests.post(f"{API_CENTRAL_BASE}/weather_alert", json=payload, timeout=5)
         response.raise_for_status()
         result = response.json()
         action = "ACTIVADA" if alert else "CANCELADA"
@@ -123,7 +147,7 @@ def send_alert(ubicacion: str, alert: bool, temperatura: float):
             for cp in result["affected_cps"]:
                 print(f"       CP {cp['idCP']}: {cp['action']}")
     except requests.exceptions.ConnectionError:
-        print(f"[EV_W] Error: No se puede conectar a API_Central ({API_CENTRAL_URL})")
+        print(f"[EV_W] Error: No se puede conectar a API_Central ({API_CENTRAL_BASE})")
         print(f"[EV_W] Asegurese de que EV_Central esta ejecutandose")
     except Exception as e:
         print(f"[EV_W] Error enviando alerta: {e}")
@@ -136,30 +160,17 @@ def send_temperature_update(ubicacion: str, temperatura: float, alert_active: bo
             "alert": alert_active,
             "temperatura": temperatura
         }
-        response = requests.post(API_CENTRAL_URL, json=payload, timeout=5)
+        response = requests.post(f"{API_CENTRAL_BASE}/weather_alert", json=payload, timeout=5)
         response.raise_for_status()
     except Exception as e:
         if not menu_activo:
             print(f"[EV_W] Error enviando temperatura de {ubicacion}: {e}")
 
-def get_cps_from_db():
-    """Obtiene lista de CPs con su ubicacion desde BD."""
-    try:
-        with sqlite3.connect(BBDD) as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT idCP, ubicacion FROM CP ORDER BY idCP")
-            return cur.fetchall()
-    except Exception as e:
-        print(f"[EV_W] Error leyendo CPs de BD: {e}")
-        return []
-
 def cambiar_ubicacion_cp(id_cp: str, nueva_ubicacion: str, ciudad_openweather: str = None):
     """Cambia la ubicacion de un CP via API_Central."""
     try:
-        # Llamar a API_Central para cambiar ubicacion
-        api_url = API_CENTRAL_URL.replace('/weather_alert', '')
         response = requests.put(
-            f"{api_url}/cp/{id_cp}/ubicacion",
+            f"{API_CENTRAL_BASE}/cp/{id_cp}/ubicacion",
             json={"ubicacion": nueva_ubicacion},
             timeout=5
         )
@@ -242,10 +253,10 @@ def menu_interactivo():
         menu_activo = True
 
         if opcion == "1":
-            # Mostrar CPs disponibles
-            cps = get_cps_from_db()
+            # Mostrar CPs disponibles (desde API)
+            cps = get_cps_from_api()
             if not cps:
-                print("[EV_W] No hay CPs registrados")
+                print("[EV_W] No hay CPs registrados o no se puede conectar a Central")
                 continue
 
             print("\n[EV_W] CPs disponibles:")
@@ -284,25 +295,41 @@ def menu_interactivo():
             break
 
 def main():
-    global API_CENTRAL_URL
+    global API_CENTRAL_BASE
 
     # Argumento opcional para URL de Central
     if len(sys.argv) > 1:
-        API_CENTRAL_URL = sys.argv[1]
+        API_CENTRAL_BASE = sys.argv[1]
+        # Asegurar que no termina en /
+        API_CENTRAL_BASE = API_CENTRAL_BASE.rstrip('/')
 
     print("[EV_W] Weather Control Office - Release 2")
-    print(f"[EV_W] API Central: {API_CENTRAL_URL}")
+    print(f"[EV_W] API Central: {API_CENTRAL_BASE}")
     print(f"[EV_W] API Key leida de: {OPENWEATHER_API_KEY_FILE}")
     print(f"[EV_W] OpenWeather API Key: {'Configurada' if OPENWEATHER_API_KEY else 'NO CONFIGURADA (modo simulacion)'}")
     print(f"[EV_W] Polling cada {POLL_INTERVAL} segundos")
     print("[EV_W] Umbral de alerta: < 0C")
+    print("[EV_W] NO usa BD local - obtiene datos de API_Central")
 
     if not OPENWEATHER_API_KEY:
         print("[EV_W] MODO SIMULACION: Las temperaturas seran aleatorias")
         print(f"[EV_W] Para usar OpenWeather, cree el archivo {OPENWEATHER_API_KEY_FILE} con su API key")
 
-    # Cargar ubicaciones iniciales desde BD
-    ubicaciones = get_ubicaciones_from_db()
+    # Esperar a que API_Central este disponible
+    print("[EV_W] Esperando conexion con API_Central...")
+    while True:
+        try:
+            response = requests.get(f"{API_CENTRAL_BASE}/health", timeout=5)
+            if response.status_code == 200:
+                print("[EV_W] Conectado a API_Central")
+                break
+        except:
+            pass
+        print("[EV_W] API_Central no disponible, reintentando en 3 segundos...")
+        time.sleep(3)
+
+    # Cargar ubicaciones iniciales desde API
+    ubicaciones = get_ubicaciones_from_api()
     for ub in ubicaciones:
         alert_state[ub] = False
         # Mapear ubicaciones internas a ciudades reales
@@ -310,7 +337,7 @@ def main():
             # Usar Madrid como default para zonas genericas
             LOCATION_MAPPING[ub] = "Madrid"
 
-    print(f"[EV_W] Ubicaciones cargadas de BD: {list(alert_state.keys())}")
+    print(f"[EV_W] Ubicaciones cargadas de API: {list(alert_state.keys())}")
 
     # Iniciar menu en hilo separado
     import threading
@@ -323,11 +350,11 @@ def main():
             while menu_activo:
                 time.sleep(0.5)
 
-            # Recargar ubicaciones de BD periodicamente
-            ubicaciones_bd = set(get_ubicaciones_from_db())
+            # Recargar ubicaciones de API periodicamente
+            ubicaciones_api = set(get_ubicaciones_from_api())
 
-            # Eliminar ubicaciones que ya no existen en la BD
-            ubicaciones_a_eliminar = [ub for ub in alert_state.keys() if ub not in ubicaciones_bd]
+            # Eliminar ubicaciones que ya no existen
+            ubicaciones_a_eliminar = [ub for ub in alert_state.keys() if ub not in ubicaciones_api]
             for ub in ubicaciones_a_eliminar:
                 del alert_state[ub]
                 if ub in LOCATION_MAPPING:
@@ -336,7 +363,7 @@ def main():
                     print(f"[EV_W] Ubicacion eliminada: {ub}")
 
             # Añadir nuevas ubicaciones
-            for ub in ubicaciones_bd:
+            for ub in ubicaciones_api:
                 if ub not in alert_state:
                     alert_state[ub] = False
                     # Determinar ciudad para OpenWeather
