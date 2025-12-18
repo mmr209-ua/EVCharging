@@ -36,8 +36,7 @@ COLORS = {
     "PARADO": "#FFA500",
     "AVERIADO": "#FF0000",
     "DESCONECTADO": "#9E9B9B",
-    "DESACTIVADO": "#8B0000",  # Rojo oscuro - fuera de servicio
-    "CLIMA": "#87CEEB",  # Azul claro - fuera de servicio por clima
+    "CLIMA": "#FFA500",  # Fuera de servicio por clima
 }
 
 def safe_log(msg: str):
@@ -774,7 +773,7 @@ class CentralGUI(tk.Tk):
 
         try:
             with sqlite3.connect(BBDD) as conn:
-                conn.execute("UPDATE CP SET encryption_key = NULL, authenticated = 0, estado = 'DESACTIVADO'")
+                conn.execute("UPDATE CP SET encryption_key = NULL, authenticated = 0, estado = 'DESCONECTADO'")
                 conn.commit()
 
             log_audit('SECURITY', 'localhost', 'CENTRAL', 'REVOKE_KEYS', {'action': 'Revoke all encryption keys, CPs desactivados'}, 'SUCCESS')
