@@ -2,15 +2,15 @@
 # Instalar con: pip install -r requirements.txt
 
 # Kafka
-kafka-python==2.0.2
+kafka-python
 
 # Flask (API REST)
-flask==3.0.0
-flask-cors==4.0.0
+flask
+flask-cors
 
 # HTTP requests
-requests==2.31.0
-urllib3==2.1.0
+requests
+urllib3
 
 # Cryptography (cifrado Fernet/AES)
-cryptography==41.0.7
+cryptography

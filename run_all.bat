@@ -9,11 +9,13 @@ echo.
 
 REM ==== CONFIGURACION GENERAL ====
 set BROKER=192.168.24.1:9092
+set CENTRAL_IP=192.168.24.1
 set CENTRAL_PORT=9098
 set DB_HOST=192.168.24.1
 
 REM ==== CONFIGURACION API Y WEB ====
-set REGISTRY_URL=https://localhost:5001
+set REGISTRY_IP=192.168.1.10
+set REGISTRY_URL=https://%REGISTRY_IP%:5001
 set API_PORT=5002
 set WEB_PORT=3000
 
@@ -37,7 +39,7 @@ timeout /t 3 >nul
 
 REM ==== ARRANQUE CENTRAL ====
 echo.
-echo [CENTRAL] Iniciando Central en puerto %CENTRAL_PORT% (API en %API_PORT%)...
+echo [CENTRAL] Iniciando Central en puerto %CENTRAL_PORT%...
 start cmd /k "title CENTRAL && color 0E && py EV_Central.py %CENTRAL_PORT% %BROKER% %DB_HOST%"
 timeout /t 3 >nul
 
@@ -50,7 +52,7 @@ timeout /t 2 >nul
 REM ==== ARRANQUE CP MONITOR ====
 echo.
 echo [MONITOR %CP1_ID%] Iniciando Monitor %CP1_ID%...
-start cmd /k "title CP_MONITOR_%CP1_ID% && color 0A && py EV_CP_M.py %CP1_ID% 127.0.0.1 %CP1_ENGINE_PORT% 127.0.0.1 %CENTRAL_PORT% %REGISTRY_URL%"
+start cmd /k "title CP_MONITOR_%CP1_ID% && color 0A && py EV_CP_M.py %CP1_ID% 127.0.0.1 %CP1_ENGINE_PORT% %CENTRAL_IP% %CENTRAL_PORT% %REGISTRY_URL%"
 timeout /t 2 >nul
 
 REM ==== ARRANQUE DRIVER ====
