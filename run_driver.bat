@@ -20,7 +20,7 @@ REM URL de API_Central (en PC 1) - para Registry
 set API_CENTRAL_URL=http://%PC1_IP%:%API_CENTRAL_PORT%
 
 REM ==== CONFIGURACION DE DRIVERS ====
-set DRIVER1_ID=101
+set NUM_DRIVERS=3
 
 echo.
 echo ==========================================
@@ -36,24 +36,15 @@ echo [REGISTRY] Conectara con API_Central en %API_CENTRAL_URL%
 start cmd /k "title REGISTRY && color 0D && py EV_Registry.py %API_CENTRAL_URL%"
 timeout /t 3 >nul
 
-REM ==== ARRANQUE DRIVER ====
-echo.
-echo [DRIVER %DRIVER1_ID%] Iniciando Driver %DRIVER1_ID%...
-echo [DRIVER %DRIVER1_ID%] Conectara con Kafka en %BROKER%
-start cmd /k "title DRIVER_%DRIVER1_ID% && color 03 && py EV_Driver.py %BROKER% %DRIVER1_ID%"
-timeout /t 2 >nul
+for /L %%I in (1, 1, %NUM_DRIVERS%) do (
 
-echo.
-echo ==========================================
-echo   PC 3 (Driver + Registry) iniciado
-echo ==========================================
-echo   - Registry HTTPS: puerto 5001
-echo   - Driver ID: %DRIVER1_ID%
-echo.
-echo   Registry conecta con API_Central en PC 1
-echo   Driver conecta con Kafka en PC 1
-echo ==========================================
-echo.
+	REM ==== ARRANQUE DRIVER ====
+	echo.
+	echo [DRIVER %%I] Iniciando Driver %%I...
+	echo [DRIVER %%I] Conectará con Kafka en %BROKER%
+	start cmd /k "title DRIVER_%%I && color 03 && py EV_Driver.py %BROKER% %%I"
+	timeout /t 2 >nul
+)
 
 pause
 exit

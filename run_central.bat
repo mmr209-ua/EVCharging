@@ -9,10 +9,10 @@ echo ==========================================
 echo.
 
 REM ==== CONFIGURACION ====
-set BROKER=172.27.245.142:9092
-set CENTRAL_IP=172.27.245.142
+set BROKER=192.168.24.1:9092
+set CENTRAL_IP=192.168.24.1
 set CENTRAL_PORT=9098
-set DB_HOST=172.27.245.142
+set DB_HOST=192.168.24.1
 set API_PORT=5002
 set WEB_PORT=3000
 
@@ -39,18 +39,6 @@ if not exist "node_modules" (
 start cmd /k "title WEB_DASHBOARD && color 07 && npm start"
 cd ..
 timeout /t 2 >nul
-
-echo.
-echo ==========================================
-echo   PC 1 (CENTRAL) iniciado correctamente
-echo ==========================================
-echo   - Kafka Broker: %BROKER%
-echo   - Central TCP: puerto %CENTRAL_PORT%
-echo   - API_Central: puerto %API_PORT%
-echo   - Web Dashboard: puerto %WEB_PORT%
-echo   - Base de Datos: local
-echo ==========================================
-echo.
 
 choice /C SN /M "Abrir Dashboard en navegador?"
 if %errorlevel%==1 start http://localhost:%WEB_PORT%

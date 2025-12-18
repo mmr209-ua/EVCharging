@@ -3,21 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EVCharging Dashboard - Release 2</title>
+    <title>EVCharging - Release 2</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <header>
-        <h1>EVCharging Dashboard</h1>
-        <div class="status-bar">
-            <span id="connection-status" class="status-indicator disconnected">Desconectado</span>
-            <span id="last-update">Ultima actualizacion: --</span>
-        </div>
+        <h1>EVCharging</h1>
     </header>
 
     <nav>
         <button class="nav-btn active" data-tab="cps">Charging Points</button>
-        <button class="nav-btn" data-tab="drivers">Conductores</button>
         <button class="nav-btn" data-tab="transactions">Recargas</button>
         <button class="nav-btn" data-tab="weather">Clima</button>
         <button class="nav-btn" data-tab="audit">Auditoria</button>
@@ -72,7 +67,7 @@
                         <th>ID</th>
                         <th>Estado</th>
                         <th>Precio (EUR/kWh)</th>
-                        <th>Ubicacion</th>
+                        <th>Ubicación</th>
                         <th>Autenticado</th>
                         <th>Token</th>
                         <th>Clima</th>
@@ -84,9 +79,9 @@
             </table>
         </section>
 
-        <!-- Panel de Conductores -->
-        <section id="drivers-tab" class="tab-content">
-            <h2>Conductores Registrados</h2>
+        <!-- Panel de recargas y conductores -->
+        <section id="transactions-tab" class="tab-content">
+            <h2>Últimas recargas</h2>
             <div class="summary-cards">
                 <div class="card">
                     <span class="card-value" id="total-drivers">0</span>
@@ -105,25 +100,6 @@
                     <span class="card-label">Importe Total (EUR)</span>
                 </div>
             </div>
-            <table id="drivers-table">
-                <thead>
-                    <tr>
-                        <th>ID Conductor</th>
-                        <th>Recargas</th>
-                        <th>Consumo Total (kWh)</th>
-                        <th>Importe Total (EUR)</th>
-                        <th>Ultima Recarga</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <!-- Filas dinamicas -->
-                </tbody>
-            </table>
-        </section>
-
-        <!-- Panel de Transacciones -->
-        <section id="transactions-tab" class="tab-content">
-            <h2>Ultimas Transacciones</h2>
             <table id="transactions-table">
                 <thead>
                     <tr>
@@ -144,7 +120,7 @@
 
         <!-- Panel de Clima -->
         <section id="weather-tab" class="tab-content">
-            <h2>Estado del Clima por Ubicacion</h2>
+            <h2>Estado del clima por ubicación</h2>
             <div class="weather-cards" id="weather-cards">
                 <!-- Cards dinamicas -->
             </div>
@@ -152,14 +128,14 @@
 
         <!-- Panel de Auditoria -->
         <section id="audit-tab" class="tab-content">
-            <h2>Log de Auditoria</h2>
+            <h2>Log de auditoría</h2>
             <table id="audit-table">
                 <thead>
                     <tr>
                         <th>Fecha/Hora</th>
                         <th>Tipo</th>
                         <th>Origen</th>
-                        <th>Accion</th>
+                        <th>Acción</th>
                         <th>Resultado</th>
                     </tr>
                 </thead>
@@ -171,7 +147,7 @@
     </main>
 
     <footer>
-        <p>EVCharging System - Release 2 | Sistemas Distribuidos 2024-2025</p>
+        <p>EVCharging - Release 2 | Sistemas Distribuidos 2025-2026</p>
     </footer>
 
     <script src="app.js"></script>

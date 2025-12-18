@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 cd /d %~dp0
 title EVCharging - PC 2 (CP + Weather)
 color 0A
@@ -10,12 +11,13 @@ echo.
 
 REM ==== CONFIGURACION ====
 REM IP del PC 1 donde corre Central/Kafka
-set PC1_IP=172.20.243.108
+set PC1_IP=192.168.24.1
+set CENTRAL_IP=192.168.24.1
 set CENTRAL_PORT=9098
 set API_CENTRAL_PORT=5002
 
 REM IP del PC 3 donde corre Registry
-set PC3_IP=172.20.243.99
+set PC3_IP=192.168.24.1
 set REGISTRY_PORT=5001
 
 REM Broker Kafka (en PC 1)
@@ -28,31 +30,25 @@ REM URL del Registry (en PC 3)
 set REGISTRY_URL=https://%PC3_IP%:%REGISTRY_PORT%
 
 REM ==== CONFIGURACION DE CPs ====
-set CP1_ID=1
-set CP1_ENGINE_PORT=7001
+set NUM_CPS=3
+set BASE_PORT=7000
 
-echo.
-echo ==========================================
-echo   Conexiones configuradas:
-echo   - Broker Kafka: %BROKER%
-echo   - Central TCP: %PC1_IP%:%CENTRAL_PORT%
-echo   - API_Central: %API_CENTRAL_URL%
-echo   - Registry HTTPS: %REGISTRY_URL%
-echo ==========================================
-echo.
+for /L %%I in (1, 1, %NUM_CPS%) do (
+	set /A ENGINE_PORT=BASE_PORT+%%I
 
-REM ==== ARRANQUE CP ENGINE ====
-echo [ENGINE %CP1_ID%] Iniciando Engine %CP1_ID% en puerto %CP1_ENGINE_PORT%...
-start cmd /k "title CP_ENGINE_%CP1_ID% && color 0A && py EV_CP_E.py %BROKER% %CP1_ID% %CP1_ENGINE_PORT%"
-timeout /t 2 >nul
+    REM ==== ARRANQUE CP ENGINE ====
+    echo [ENGINE %%I] Iniciando Engine %%I en puerto !ENGINE_PORT!...
+    start cmd /k "title CP_ENGINE_%%I && color 0A && py EV_CP_E.py %BROKER% %%I !ENGINE_PORT!"
+    timeout /t 2 >nul
 
-REM ==== ARRANQUE CP MONITOR ====
-echo.
-echo [MONITOR %CP1_ID%] Iniciando Monitor %CP1_ID%...
-echo [MONITOR %CP1_ID%] Conectará con Central en %PC1_IP%:%CENTRAL_PORT%
-echo [MONITOR %CP1_ID%] Conectará con Registry en %REGISTRY_URL%
-start cmd /k "title CP_MONITOR_%CP1_ID% && color 0A && py EV_CP_M.py %CP1_ID% 127.0.0.1 %CP1_ENGINE_PORT% %PC1_IP% %CENTRAL_PORT% %REGISTRY_URL%"
-timeout /t 2 >nul
+    REM ==== ARRANQUE CP MONITOR ====
+    echo.
+    echo [MONITOR %%I] Iniciando Monitor %%I...
+    echo [MONITOR %%I] Conectará con Central en %PC1_IP%:%CENTRAL_PORT%
+    echo [MONITOR %%I] Conectará con Registry en %REGISTRY_URL%
+    start cmd /k "title CP_MONITOR_%%I && color 0A && py EV_CP_M.py %%I 127.0.0.1 !ENGINE_PORT! %CENTRAL_IP% %CENTRAL_PORT% %REGISTRY_URL%"
+    timeout /t 2 >nul
+)
 
 REM ==== ARRANQUE WEATHER CONTROL ====
 echo.
@@ -60,20 +56,6 @@ echo [WEATHER] Iniciando Weather Control Office...
 echo [WEATHER] Conectará con API_Central en %API_CENTRAL_URL%
 start cmd /k "title WEATHER_CONTROL && color 0B && py EV_W.py %API_CENTRAL_URL%"
 timeout /t 2 >nul
-
-echo.
-echo ==========================================
-echo   PC 2 (CP + Weather) iniciado correctamente
-echo ==========================================
-echo   - Engine CP %CP1_ID%: puerto %CP1_ENGINE_PORT%
-echo   - Monitor CP %CP1_ID%: conectado a Central
-echo   - Weather Control: conectado a API_Central
-echo.
-echo   IMPORTANTE: Usa el menu del Monitor para:
-echo   1. Registrarse en Registry (HTTPS)
-echo   2. Autenticarse en Central
-echo ==========================================
-echo.
 
 pause
 exit

@@ -41,7 +41,7 @@ LOCATION_MAPPING: Dict[str, str] = {}
 # Flag para indicar si el usuario esta escribiendo en el menu
 menu_activo = False
 
-# Obtiene ubicaciones unicas de CPs desde API_Central.
+# Obtiene ubicaciones unicas de CPs desde API_Central
 def get_ubicaciones_from_api() -> List[str]:
     try:
         response = requests.get(f"{API_CENTRAL_BASE}/cps", timeout=5)
@@ -59,7 +59,7 @@ def get_ubicaciones_from_api() -> List[str]:
             print(f"[EV_W] Error obteniendo ubicaciones de API: {e}")
         return []
 
-# Obtiene lista de CPs con su ubicacion desde API_Central.
+# Obtiene lista de CPs con su ubicacion desde API_Central
 def get_cps_from_api() -> List[tuple]:
     try:
         response = requests.get(f"{API_CENTRAL_BASE}/cps", timeout=5)
@@ -76,10 +76,7 @@ def get_cps_from_api() -> List[tuple]:
             print(f"[EV_W] Error obteniendo CPs de API: {e}")
         return []
 
-"""
-    Consulta OpenWeather API para obtener temperatura.
-    Retorna temperatura en Celsius o None si hay error.
-    """
+# Consulta OpenWeather API para obtener temperatura
 def get_temperature_openweather(city: str) -> float:
     global OPENWEATHER_API_KEY
     
@@ -90,7 +87,6 @@ def get_temperature_openweather(city: str) -> float:
         return None
 
     try:
-        print(OPENWEATHER_API_KEY)
         params = {
             'q': city,
             'appid': OPENWEATHER_API_KEY,
@@ -113,11 +109,8 @@ def get_temperature_openweather(city: str) -> float:
         print(f"[EV_W] Error consultando clima para {city}: {e}")
         return None
 
+# Simula temperatura para demo/testing. Permite probar sin API key de OpenWeather
 def get_temperature_simulated(ubicacion: str) -> float:
-    """
-    Simula temperatura para demo/testing.
-    Permite probar sin API key de OpenWeather.
-    """
     
     # Simular diferentes temperaturas segun ubicacion
     base_temps = {
@@ -136,8 +129,8 @@ def get_temperature_simulated(ubicacion: str) -> float:
     variation = random.uniform(-15, 10)
     return round(base + variation, 1)
 
+# Envia alerta a API_Central
 def send_alert(ubicacion: str, alert: bool, temperatura: float):
-    """Envia alerta a API_Central."""
     try:
         payload = {
             "ubicacion": ubicacion,
@@ -158,8 +151,8 @@ def send_alert(ubicacion: str, alert: bool, temperatura: float):
     except Exception as e:
         print(f"[EV_W] Error enviando alerta: {e}")
 
+# Envia actualizacion de temperatura a API_Central (siempre, no solo alertas)
 def send_temperature_update(ubicacion: str, temperatura: float, alert_active: bool):
-    """Envia actualizacion de temperatura a API_Central (siempre, no solo alertas)."""
     try:
         payload = {
             "ubicacion": ubicacion,
@@ -172,8 +165,8 @@ def send_temperature_update(ubicacion: str, temperatura: float, alert_active: bo
         if not menu_activo:
             print(f"[EV_W] Error enviando temperatura de {ubicacion}: {e}")
 
+# Cambia la ubicacion de un CP via API_Central
 def cambiar_ubicacion_cp(id_cp: str, nueva_ubicacion: str, ciudad_openweather: str = None):
-    """Cambia la ubicacion de un CP via API_Central."""
     try:
         response = requests.put(
             f"{API_CENTRAL_BASE}/cp/{id_cp}/ubicacion",
@@ -227,16 +220,16 @@ def cambiar_ubicacion_cp(id_cp: str, nueva_ubicacion: str, ciudad_openweather: s
         print(f"[EV_W] Error cambiando ubicacion: {e}")
         return False
 
+# Lista ubicaciones monitorizadas
 def list_locations():
-    """Lista ubicaciones monitoreadas."""
     print("\n[EV_W] Ubicaciones monitoreadas:")
     for ub in alert_state.keys():
         city = LOCATION_MAPPING.get(ub, ub)
         status = "ALERTA ACTIVA" if alert_state.get(ub) else "Normal"
         print(f"   {ub} -> {city} [{status}]")
 
+# Menu para gestionar ubicaciones en runtime
 def menu_interactivo():
-    """Menu para gestionar ubicaciones en runtime."""
     global menu_activo
     while True:
         # Desactivar menu para permitir polling mientras se muestra el menu
