@@ -40,6 +40,7 @@ async function updateAll() {
     try {
         await Promise.all([
             fetchCPs(),
+            fetchDrivers(),
             fetchTransactions(),
             fetchWeather(),
             fetchAudit()
@@ -113,7 +114,7 @@ function renderCPs(cps) {
     const tbody = document.querySelector('#cps-table tbody');
 
     if (cps.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="no-data">No hay CPs registrados</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="no-data">No hay CPs registrados</td></tr>';
         return;
     }
 
@@ -125,6 +126,10 @@ function renderCPs(cps) {
         const climaBadge = cp.paused_by_weather
             ? '<span class="badge badge-blue">FUERA DE SERVICIO</span>'
             : '<span class="badge badge-green">OK</span>';
+        const token = cp.authToken || cp.auth_token || 'N/A';
+        const tokenDisplay = token !== 'N/A' && token.length > 12
+            ? token.substring(0, 12) + '...'
+            : token;
 
         return `
             <tr>
@@ -133,6 +138,7 @@ function renderCPs(cps) {
                 <td>${cp.precio ? cp.precio.toFixed(2) : 'N/A'}</td>
                 <td>${cp.ubicacion || 'N/A'}</td>
                 <td>${authBadge}</td>
+                <td><code title="${token}">${tokenDisplay}</code></td>
                 <td>${climaBadge}</td>
             </tr>
         `;
@@ -148,6 +154,82 @@ function getEstadoBadge(estado) {
         'DESACTIVADO': '<span class="badge badge-gray">DESACTIVADO</span>'
     };
     return badges[estado] || `<span class="badge badge-gray">${estado}</span>`;
+}
+
+// ======================================================================
+// CONDUCTORES
+// ======================================================================
+
+let cachedTransactions = [];
+
+async function fetchDrivers() {
+    try {
+        const [driversRes, transactionsRes] = await Promise.all([
+            fetch(`${API_BASE}/drivers`),
+            fetch(`${API_BASE}/transactions?limit=1000`)
+        ]);
+
+        if (!driversRes.ok) throw new Error('Error fetching drivers');
+        if (!transactionsRes.ok) throw new Error('Error fetching transactions');
+
+        const drivers = await driversRes.json();
+        cachedTransactions = await transactionsRes.json();
+
+        renderDrivers(drivers, cachedTransactions);
+    } catch (error) {
+        console.error('Error fetching drivers:', error);
+        throw error;
+    }
+}
+
+function renderDrivers(drivers, transactions) {
+    // Calcular estadisticas por conductor
+    const driverStats = drivers.map(driver => {
+        const driverTx = transactions.filter(tx => tx.conductor === driver.idConductor);
+        const totalRecargas = driverTx.length;
+        const totalConsumo = driverTx.reduce((sum, tx) => sum + (tx.consumo || 0), 0);
+        const totalImporte = driverTx.reduce((sum, tx) => sum + (tx.importe || 0), 0);
+        const ultimaRecarga = driverTx.length > 0 ? driverTx[0].timestamp : null;
+
+        return {
+            idConductor: driver.idConductor,
+            recargas: totalRecargas,
+            consumo: totalConsumo,
+            importe: totalImporte,
+            ultimaRecarga: ultimaRecarga
+        };
+    });
+
+    // Actualizar contadores globales
+    const totalDrivers = drivers.length;
+    const totalRecargas = transactions.length;
+    const totalConsumo = transactions.reduce((sum, tx) => sum + (tx.consumo || 0), 0);
+    const totalImporte = transactions.reduce((sum, tx) => sum + (tx.importe || 0), 0);
+
+    document.getElementById('total-drivers').textContent = totalDrivers;
+    document.getElementById('total-recargas').textContent = totalRecargas;
+    document.getElementById('total-consumo').textContent = totalConsumo.toFixed(2);
+    document.getElementById('total-importe').textContent = totalImporte.toFixed(2);
+
+    // Renderizar tabla
+    const tbody = document.querySelector('#drivers-table tbody');
+
+    if (driverStats.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="no-data">No hay conductores registrados</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = driverStats.map(driver => {
+        return `
+            <tr>
+                <td><strong>${driver.idConductor}</strong></td>
+                <td>${driver.recargas}</td>
+                <td>${driver.consumo.toFixed(2)}</td>
+                <td>${driver.importe.toFixed(2)}</td>
+                <td>${driver.ultimaRecarga || 'N/A'}</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 // ======================================================================

@@ -17,6 +17,7 @@
 
     <nav>
         <button class="nav-btn active" data-tab="cps">Charging Points</button>
+        <button class="nav-btn" data-tab="drivers">Conductores</button>
         <button class="nav-btn" data-tab="transactions">Recargas</button>
         <button class="nav-btn" data-tab="weather">Clima</button>
         <button class="nav-btn" data-tab="audit">Auditoria</button>
@@ -73,7 +74,45 @@
                         <th>Precio (EUR/kWh)</th>
                         <th>Ubicacion</th>
                         <th>Autenticado</th>
+                        <th>Token</th>
                         <th>Clima</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Filas dinamicas -->
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Panel de Conductores -->
+        <section id="drivers-tab" class="tab-content">
+            <h2>Conductores Registrados</h2>
+            <div class="summary-cards">
+                <div class="card">
+                    <span class="card-value" id="total-drivers">0</span>
+                    <span class="card-label">Total Conductores</span>
+                </div>
+                <div class="card card-green">
+                    <span class="card-value" id="total-recargas">0</span>
+                    <span class="card-label">Total Recargas</span>
+                </div>
+                <div class="card card-blue">
+                    <span class="card-value" id="total-consumo">0</span>
+                    <span class="card-label">Consumo Total (kWh)</span>
+                </div>
+                <div class="card card-orange">
+                    <span class="card-value" id="total-importe">0</span>
+                    <span class="card-label">Importe Total (EUR)</span>
+                </div>
+            </div>
+            <table id="drivers-table">
+                <thead>
+                    <tr>
+                        <th>ID Conductor</th>
+                        <th>Recargas</th>
+                        <th>Consumo Total (kWh)</th>
+                        <th>Importe Total (EUR)</th>
+                        <th>Ultima Recarga</th>
                     </tr>
                 </thead>
                 <tbody>

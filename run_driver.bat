@@ -8,7 +8,7 @@ echo        PC 3: Driver + Registry
 echo ==========================================
 echo.
 
-REM ==== CONFIGURACION - MODIFICAR SEGUN TU RED ====
+REM ==== CONFIGURACION ====
 REM IP del PC 1 donde corre Central/Kafka/API
 set PC1_IP=192.168.24.1
 set API_CENTRAL_PORT=5002

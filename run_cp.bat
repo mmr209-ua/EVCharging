@@ -8,14 +8,14 @@ echo        PC 2: Monitor + Engine + Weather
 echo ==========================================
 echo.
 
-REM ==== CONFIGURACION - MODIFICAR SEGUN TU RED ====
+REM ==== CONFIGURACION ====
 REM IP del PC 1 donde corre Central/Kafka
-set PC1_IP=192.168.24.1
+set PC1_IP=172.20.243.108
 set CENTRAL_PORT=9098
 set API_CENTRAL_PORT=5002
 
 REM IP del PC 3 donde corre Registry
-set PC3_IP=192.168.1.10
+set PC3_IP=172.20.243.99
 set REGISTRY_PORT=5001
 
 REM Broker Kafka (en PC 1)

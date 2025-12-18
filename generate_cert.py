@@ -1,3 +1,5 @@
+# EVCharging - Release 2 Certificado
+# Instalar con: openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout certServ.pem -out certServ.pem
 import subprocess
 
 openssl_cmd = [

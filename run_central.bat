@@ -8,11 +8,11 @@ echo        PC 1: Kafka + Central + API + Web
 echo ==========================================
 echo.
 
-REM ==== CONFIGURACION - MODIFICAR SEGUN TU RED ====
-set BROKER=192.168.24.1:9092
-set CENTRAL_IP=192.168.24.1
+REM ==== CONFIGURACION ====
+set BROKER=172.27.245.142:9092
+set CENTRAL_IP=172.27.245.142
 set CENTRAL_PORT=9098
-set DB_HOST=192.168.24.1
+set DB_HOST=172.27.245.142
 set API_PORT=5002
 set WEB_PORT=3000
 

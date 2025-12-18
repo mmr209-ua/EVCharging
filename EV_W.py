@@ -5,6 +5,7 @@
 import requests
 import time
 import sys
+import random
 import os
 from typing import Dict, List
 
@@ -40,8 +41,8 @@ LOCATION_MAPPING: Dict[str, str] = {}
 # Flag para indicar si el usuario esta escribiendo en el menu
 menu_activo = False
 
+# Obtiene ubicaciones unicas de CPs desde API_Central.
 def get_ubicaciones_from_api() -> List[str]:
-    """Obtiene ubicaciones unicas de CPs desde API_Central."""
     try:
         response = requests.get(f"{API_CENTRAL_BASE}/cps", timeout=5)
         response.raise_for_status()
@@ -58,8 +59,8 @@ def get_ubicaciones_from_api() -> List[str]:
             print(f"[EV_W] Error obteniendo ubicaciones de API: {e}")
         return []
 
+# Obtiene lista de CPs con su ubicacion desde API_Central.
 def get_cps_from_api() -> List[tuple]:
-    """Obtiene lista de CPs con su ubicacion desde API_Central."""
     try:
         response = requests.get(f"{API_CENTRAL_BASE}/cps", timeout=5)
         response.raise_for_status()
@@ -75,15 +76,21 @@ def get_cps_from_api() -> List[tuple]:
             print(f"[EV_W] Error obteniendo CPs de API: {e}")
         return []
 
-def get_temperature_openweather(city: str) -> float:
-    """
+"""
     Consulta OpenWeather API para obtener temperatura.
     Retorna temperatura en Celsius o None si hay error.
     """
+def get_temperature_openweather(city: str) -> float:
+    global OPENWEATHER_API_KEY
+    
+    # API Key de OpenWeather (se lee desde archivo)
+    OPENWEATHER_API_KEY = load_api_key()
+
     if not OPENWEATHER_API_KEY:
         return None
 
     try:
+        print(OPENWEATHER_API_KEY)
         params = {
             'q': city,
             'appid': OPENWEATHER_API_KEY,
@@ -111,8 +118,7 @@ def get_temperature_simulated(ubicacion: str) -> float:
     Simula temperatura para demo/testing.
     Permite probar sin API key de OpenWeather.
     """
-    import random
-
+    
     # Simular diferentes temperaturas segun ubicacion
     base_temps = {
         "Madrid": 10,
