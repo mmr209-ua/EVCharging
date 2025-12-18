@@ -3,29 +3,66 @@ cd /d %~dp0
 title EVCharging
 color 0A
 echo ==========================================
-echo                 EVCharging 
+echo        EVCharging - Release 2
 echo ==========================================
 echo.
 
-@echo off
 REM ==== CONFIGURACION GENERAL ====
-setlocal enabledelayedexpansion
 set BROKER=192.168.24.1:9092
+set CENTRAL_PORT=9098
+set DB_HOST=192.168.24.1
 
-REM ==== CONFIGURACION DE Drivers ====
-set NUM_DRIVERS=3
+REM ==== CONFIGURACION API Y WEB ====
+set REGISTRY_URL=https://localhost:5001
+set API_PORT=5002
+set WEB_PORT=3000
 
-REM ==== ARRANQUE AUTOMATICO DE drivers ====
+REM ==== CONFIGURACION DE CPs ====
+set CP1_ID=1
+set CP1_ENGINE_PORT=7001
+
+REM ==== CONFIGURACION DE DRIVERS ====
+set DRIVER1_ID=101
+
+REM ==== INICIALIZAR BASE DE DATOS ====
+echo [DB] Inicializando Base de Datos...
+py EV_DB.py
+timeout /t 1 >nul
+
+REM ==== ARRANQUE REGISTRY ====
 echo.
-echo ==== Iniciando %NUM_DRIVERS% drivers ====
+echo [REGISTRY] Iniciando Registry...
+start cmd /k "title REGISTRY && color 0D && py EV_Registry.py"
+timeout /t 3 >nul
+
+REM ==== ARRANQUE DRIVER ====
+echo.
+echo [DRIVER %DRIVER1_ID%] Iniciando...
+start cmd /k "title DRIVER_%DRIVER1_ID% && color 03 && py EV_Driver.py %BROKER% %DRIVER1_ID%"
+
+
+echo.
+echo ==========================================
+echo        SISTEMA RELEASE 2 INICIADO
+echo ==========================================
+echo.
+echo Servicios activos:
+echo   - Registry HTTPS: https://localhost:5001
+echo   - Central TCP:    localhost:%CENTRAL_PORT%
+echo   - API REST:       http://localhost:%API_PORT%
+echo   - Weather:        Monitoreando clima
+echo   - Dashboard:      http://localhost:%WEB_PORT%
+echo   - Kafka broker:   %BROKER%
+echo   - CP %CP1_ID%:          Engine + Monitor
+echo   - Driver %DRIVER1_ID%
+echo.
+echo Para registrar CP en el Monitor: 1
+echo Para autenticar CP en Central:   2
+echo ==========================================
 echo.
 
-for /L %%I in (1, 1, %NUM_DRIVERS%) do (
-	echo [DRIVER %%I] Iniciando...
-	start cmd /k "title DRIVER_%%I && py EV_Driver.py %BROKER% %%I"
-	timeout /t 3 >nul    
-)
+choice /C SN /M "Abrir Dashboard en navegador?"
+if %errorlevel%==1 start http://localhost:%WEB_PORT%
 
-echo.
-echo ==== Todos los drivers iniciados correctamente ====
+pause
 exit

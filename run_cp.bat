@@ -7,40 +7,69 @@ echo        EVCharging - Release 2
 echo ==========================================
 echo.
 
-setlocal enabledelayedexpansion
-
 REM ==== CONFIGURACION GENERAL ====
 set BROKER=192.168.24.1:9092
-set CENTRAL_IP=192.168.24.1
 set CENTRAL_PORT=9098
+set DB_HOST=192.168.24.1
+
+REM ==== CONFIGURACION API Y WEB ====
 set REGISTRY_URL=https://localhost:5001
+set API_PORT=5002
+set WEB_PORT=3000
 
 REM ==== CONFIGURACION DE CPs ====
-set NUM_CPS=3
-set BASE_PORT=7000
+set CP1_ID=1
+set CP1_ENGINE_PORT=7001
 
-REM ==== ARRANQUE AUTOMATICO DE CPs ====
+REM ==== CONFIGURACION DE DRIVERS ====
+set DRIVER1_ID=101
+
+REM ==== INICIALIZAR BASE DE DATOS ====
+echo [DB] Inicializando Base de Datos...
+py EV_DB.py
+timeout /t 1 >nul
+
+REM ==== ARRANQUE CP ENGINE ====
 echo.
-echo ==== Iniciando %NUM_CPS% CPs ====
+echo [ENGINE %CP1_ID%] Iniciando Engine %CP1_ID% en puerto %CP1_ENGINE_PORT% ...
+start cmd /k "title CP_ENGINE_%CP1_ID% && color 0A && py EV_CP_E.py %BROKER% %CP1_ID% %CP1_ENGINE_PORT%"
+timeout /t 2 >nul
+
+REM ==== ARRANQUE CP MONITOR ====
+echo.
+echo [MONITOR %CP1_ID%] Iniciando Monitor %CP1_ID%...
+start cmd /k "title CP_MONITOR_%CP1_ID% && color 0A && py EV_CP_M.py %CP1_ID% 127.0.0.1 %CP1_ENGINE_PORT% 127.0.0.1 %CENTRAL_PORT% %REGISTRY_URL%"
+timeout /t 2 >nul
+
+REM ==== ARRANQUE WEATHER CONTROL ====
+echo.
+echo [WEATHER] Iniciando Weather Control Office...
+start cmd /k "title WEATHER_CONTROL_OFFICE && color 0B && py EV_W.py"
+timeout /t 2 >nul
+
+
+echo.
+echo ==========================================
+echo        SISTEMA RELEASE 2 INICIADO
+echo ==========================================
+echo.
+echo Servicios activos:
+echo   - Registry HTTPS: https://localhost:5001
+echo   - Central TCP:    localhost:%CENTRAL_PORT%
+echo   - API REST:       http://localhost:%API_PORT%
+echo   - Weather:        Monitoreando clima
+echo   - Dashboard:      http://localhost:%WEB_PORT%
+echo   - Kafka broker:   %BROKER%
+echo   - CP %CP1_ID%:          Engine + Monitor
+echo   - Driver %DRIVER1_ID%
+echo.
+echo Para registrar CP en el Monitor: 1
+echo Para autenticar CP en Central:   2
+echo ==========================================
 echo.
 
-for /L %%I in (1, 1, %NUM_CPS%) do (
-    set /A ENGINE_PORT=!BASE_PORT!+%%I
+choice /C SN /M "Abrir Dashboard en navegador?"
+if %errorlevel%==1 start http://localhost:%WEB_PORT%
 
-    echo [ENGINE %%I] Iniciando en puerto !ENGINE_PORT! ...
-    start cmd /k "title CP_ENGINE_%%I && color 0A && py EV_CP_E.py %BROKER% %%I !ENGINE_PORT!"
-    timeout /t 3 >nul
-
-    echo [MONITOR %%I] Conectando a CENTRAL y ENGINE...
-    start cmd /k "title CP_MONITOR_%%I && color 0B && py EV_CP_M.py %%I 127.0.0.1 !ENGINE_PORT! %CENTRAL_IP% %CENTRAL_PORT% %REGISTRY_URL%"
-    timeout /t 3 >nul
-)
-
-echo.
-echo ==== Todos los CPs iniciados correctamente ====
-echo.
-echo Para registrar cada CP en su Monitor: 1
-echo Para autenticar cada CP en Central:   2
-echo.
 pause
 exit
