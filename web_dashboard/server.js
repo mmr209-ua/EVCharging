@@ -164,6 +164,5 @@ app.listen(PORT, () => {
     console.log('[WEB] EVCharging Dashboard - Release 2');
     console.log('[WEB] ==========================================');
     console.log(`[WEB] Servidor web: http://localhost:${PORT}`);
-    console.log(`[WEB] API Central:  ${API_CENTRAL_URL}`);
     console.log('[WEB] ==========================================');
 });

@@ -10,10 +10,10 @@ from kafka import KafkaProducer, KafkaConsumer
 from EV_Topics import *
 
 # Archivo de configuracion compartido con CP_M
-CONFIG_FILE = "cp_config.json"
+CONFIG_FILE = None
 
+# Carga la configuración del CP desde su archivo
 def load_config():
-    """Carga la configuracion del CP desde archivo."""
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r') as f:
@@ -31,7 +31,9 @@ def main():
     cp_id = str(sys.argv[2])
     listen_port = int(sys.argv[3])
 
-    # Cargar configuracion (encryption_key del CP_M)
+    # Cargar configuración (encryption_key del CP_M)
+    global CONFIG_FILE
+    CONFIG_FILE = f"cp_config_{cp_id}.json"
     config = load_config()
     encryption_key = config.get("encryption_key")
 
@@ -40,7 +42,7 @@ def main():
     else:
         print(f"[ENGINE {cp_id}] Sin clave de cifrado - modo legacy (sin cifrar)")
 
-    # Importar modulo de cifrado si hay clave
+    # Importar módulo de cifrado si hay clave
     encrypt_message = None
     if encryption_key:
         try:
@@ -53,13 +55,12 @@ def main():
 
     # Funcion para enviar mensajes (con o sin cifrado)
     def send_kafka_message(producer, topic, message):
-        """Envia mensaje a Kafka, cifrado si hay clave disponible."""
+        # Envia mensaje cifrado a Kafka
         if encryption_key and encrypt_message:
-            # Cifrar mensaje
-            encrypted = encrypt_message(encryption_key, message)
+            encrypted = encrypt_message(encryption_key, message) # Cifrar mensaje
             payload = {"encrypted": encrypted, "idCP": cp_id}
+        # En teoria no deberia entrar aqui
         else:
-            # Modo legacy sin cifrar
             payload = message
 
         producer.send(topic, payload)

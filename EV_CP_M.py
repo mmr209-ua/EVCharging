@@ -6,32 +6,42 @@ import socket
 import threading
 import os
 import urllib3
+import requests
 
 # Desactivar warnings de SSL para certificados autofirmados
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Importar modulo de cifrado (Release 2)
+# Importar modulo de cifrado
 try:
     from crypto_utils import encrypt_message
 except ImportError:
     print("[CP_MONITOR] ADVERTENCIA: crypto_utils no encontrado, cifrado deshabilitado")
     encrypt_message = None
 
-# Archivo de configuracion local del CP
-CONFIG_FILE = "cp_config.json"
+# Archivo de configuración local del CP
+# Contiene los datos de autenticación (de aquí se saca la credencial)
+CONFIG_FILE = None
 
+# Carga la configuración del CP
 def load_config():
-    """Carga la configuracion del CP desde archivo."""
+    if not CONFIG_FILE:
+        print("[CP_MONITOR] CONFIG_FILE no definido")
+        return {}
+    
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r') as f:
+                print(f"[CP_MONITOR] Configuración cargada desde {CONFIG_FILE}")
                 return json.load(f)
-        except:
+        except Exception as e:
+            print(f"[CP_MONITOR] Error leyendo {CONFIG_FILE}: {e}")
             return {}
-    return {}
+    else:
+        print(f"[CP_MONITOR] No existe el fichero de configuración {CONFIG_FILE}, se creará al registrarse")
+        return {}
 
+# Guarda la configuración del CP en un fichero local
 def save_config(config):
-    """Guarda la configuracion del CP en archivo."""
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=2)
 
@@ -51,12 +61,12 @@ def main():
     if not registry_url.startswith("http://") and not registry_url.startswith("https://"):
         registry_url = "https://" + registry_url
 
-    # Cargar configuracion existente
+    # Cargar configuración existente
+    global CONFIG_FILE
+    CONFIG_FILE = f"cp_config_{cp_id}.json"
     config = load_config()
-    if config.get("idCP") != cp_id:
-        config = {"idCP": cp_id}
 
-    # Conexion continua con CENTRAL por TCP
+    # Conexión continua con CENTRAL por TCP
     def connect_to_central():
         while True:
             try:
@@ -73,6 +83,7 @@ def main():
                 print(f"[CP_MONITOR {cp_id}] Error conectando a CENTRAL: {e}, reintentando...")
             time.sleep(3)
 
+    # Mandar mensajitos a central
     def send_to_central(msg):
         nonlocal central_socket
         max_retries = 3
@@ -90,6 +101,7 @@ def main():
         else:
             msg_to_send = msg
 
+        # Intentarlo varias veces
         for attempt in range(max_retries):
             try:
                 central_socket.sendall((json.dumps(msg_to_send) + "\n").encode("utf-8"))
@@ -110,15 +122,14 @@ def main():
     central_connected = False
 
     # =====================================================
-    # FUNCIONES DE REGISTRO Y AUTENTICACION
+    # FUNCIONES DE REGISTRO Y AUTENTICACIÓN
     # =====================================================
 
+    # Registra el CP en EV_Registry via HTTPS
     def registrar_en_registry():
-        """Registra el CP en EV_Registry via HTTPS."""
         nonlocal config
-        import requests
 
-        # Verificar si ya está registrado
+        # Verificar si el CP ya está registrado
         if config.get("authToken"):
             print(f"[CP_MONITOR {cp_id}] Ya esta registrado. Use opcion 3 para darse de baja primero.")
             return False
@@ -147,7 +158,7 @@ def main():
                 print(f"[CP_MONITOR {cp_id}] Registro exitoso!")
                 print(f"[CP_MONITOR {cp_id}] Token: {auth_token[:16]}...")
 
-                # Guardar en configuracion local
+                # Guardar en configuración local
                 config["authToken"] = auth_token
                 config["precio"] = float(precio)
                 config["ubicacion"] = ubicacion
@@ -173,17 +184,17 @@ def main():
             print(f"[CP_MONITOR {cp_id}] Error contactando Registry: {e}")
             return False
 
-    def autenticar_en_central():
-        """Autentica el CP en Central comprobando que existe en la BD via API REST."""
+    # Autentica el CP en Central comprobando que existe en la BD via API REST
+    def autenticar_en_central(): 
         nonlocal config, central_socket, central_connected
         import requests
 
-        # Verificar que esta registrado
+        # Verificar que está registrado
         if not config.get("authToken"):
             print(f"[CP_MONITOR {cp_id}] Error: No esta registrado. Registrese primero (opcion 1)")
             return False
 
-        # URL de API_Central (puerto 5002 en el mismo host que Central)
+        # URL de API_Central (puerto 5002 en el mismo PC que Central)
         api_url = f"http://{central_ip}:5002"
 
         print(f"[CP_MONITOR {cp_id}] Enviando autenticacion a API_Central: {api_url}/authenticate")
@@ -237,10 +248,9 @@ def main():
             print(f"[CP_MONITOR {cp_id}] Error en autenticacion: {e}")
             return False
 
+    # Da de baja el CP del Registry via HTTPS
     def darse_de_baja():
-        """Da de baja el CP del Registry via HTTPS."""
         nonlocal config, central_socket, central_connected
-        import requests
 
         auth_token = config.get("authToken")
         if not auth_token:
@@ -260,7 +270,7 @@ def main():
             if not result.get('error'):
                 print(f"[CP_MONITOR {cp_id}] Baja exitosa en Registry!")
 
-                # Limpiar configuracion local
+                # Limpiar configuración local
                 config["authToken"] = None
                 config["encryption_key"] = None
                 config["authenticated"] = False
@@ -289,8 +299,9 @@ def main():
             print(f"[CP_MONITOR {cp_id}] Error contactando Registry: {e}")
             return False
 
+    # Muestra la configuración actual del CP
     def ver_configuracion():
-        """Muestra la configuracion actual del CP."""
+        
         print(f"\n[CP_MONITOR {cp_id}] CONFIGURACION ACTUAL:")
         print(f"   idCP: {config.get('idCP', 'N/A')}")
         print(f"   authToken: {config.get('authToken', 'N/A')[:16] + '...' if config.get('authToken') else 'N/A'}")
@@ -300,7 +311,7 @@ def main():
         print(f"   ubicacion: {config.get('ubicacion', 'N/A')}")
 
     # =====================================================
-    # REGISTRO INICIAL EN CENTRAL (si ya esta autenticado)
+    # REGISTRO INICIAL EN CENTRAL (si ya está autenticado)
     # =====================================================
 
     if config.get("authenticated") and config.get("encryption_key"):
@@ -347,10 +358,10 @@ def main():
         except Exception as e:
             print(f"[CP_MONITOR {cp_id}] Error en hilo de estado: {e}")
 
-    # Iniciar hilo para mostrar estado continuo
+    # Iniciar el hilo para ir mostrando el estado
     threading.Thread(target=mostrar_estado_continuo, daemon=True).start()
 
-    # Hilo para menu interactivo
+    # Hilo para menú interactivo
     def menu_interactivo():
         nonlocal config
         while True:
@@ -378,7 +389,7 @@ def main():
                 print("Saliendo...")
                 os._exit(0)
 
-    # Iniciar menu en hilo separado
+    # Iniciar menú en un hilo separado
     threading.Thread(target=menu_interactivo, daemon=True).start()
 
     # Bucle principal: health check y notificacion a CENTRAL (cada 5 segundos)
@@ -428,7 +439,7 @@ def main():
                 send_to_central(health_msg)
 
                 if fallo_prev:
-                    # Se recupero de una averia
+                    # Se recuperó de una avería
                     print(f"[CP_MONITOR {cp_id}] ENGINE recuperado, notificado a CENTRAL")
                     fallo_prev = False
 

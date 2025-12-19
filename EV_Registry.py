@@ -1,12 +1,12 @@
 # EV_Registry.py - Release 2 con HTTPS
 # NO accede a la BD directamente - usa API_Central
-import json
 import uuid
 import sys
 import ssl
 import os
 import ipaddress
 import requests
+import time
 from flask import Flask, request, jsonify
 
 # ======================================================================
@@ -28,8 +28,8 @@ app = Flask(__name__)
 # FUNCIONES AUXILIARES PARA API_CENTRAL
 # ======================================================================
 
+# Registra evento de auditoria via API_Central
 def log_audit_via_api(event_type: str, source_ip: str, source_id: str, action: str, parameters: dict, result: str):
-    """Registra evento de auditoria via API_Central."""
     try:
         payload = {
             "event_type": event_type,
@@ -45,8 +45,8 @@ def log_audit_via_api(event_type: str, source_ip: str, source_id: str, action: s
         # Solo imprimir localmente si falla
         print(f"[REGISTRY][AUDIT] (local) {event_type} | {source_ip} | {source_id} | {action} | {result}")
 
+# Registra un CP en Central via API
 def register_cp_in_central(id_cp: str, precio: float, ubicacion: str, auth_token: str) -> dict:
-    """Registra un CP en Central via API."""
     try:
         payload = {
             "idCP": id_cp,
@@ -61,8 +61,8 @@ def register_cp_in_central(id_cp: str, precio: float, ubicacion: str, auth_token
     except Exception as e:
         return {"error": True, "message": str(e)}
 
+# Da de baja un CP en Central via API
 def unregister_cp_in_central(id_cp: str) -> dict:
-    """Da de baja un CP en Central via API."""
     try:
         response = requests.delete(f"{API_CENTRAL_BASE}/registry/unregister/{id_cp}", timeout=10)
         return response.json()
@@ -71,8 +71,8 @@ def unregister_cp_in_central(id_cp: str) -> dict:
     except Exception as e:
         return {"error": True, "message": str(e)}
 
-def get_cp_from_central(id_cp: str) -> dict:
-    """Obtiene info de un CP desde Central via API."""
+# Obtiene info de un CP desde Central via API
+def get_cp_from_central(id_cp: str) -> dict: 
     try:
         response = requests.get(f"{API_CENTRAL_BASE}/registry/status/{id_cp}", timeout=10)
         return response.json()
@@ -85,19 +85,18 @@ def get_cp_from_central(id_cp: str) -> dict:
 # API REST ENDPOINTS
 # ======================================================================
 
-@app.route('/register', methods=['POST'])
-def register_cp():
-    """
-    Registra un nuevo CP o actualiza su informacion inicial.
-    Genera y retorna credenciales para la autenticacion en EV_Central.
+"""
+Registra un nuevo CP o actualiza su informacion inicial
+Genera y retorna credenciales para la autenticacion en EV_Central
 
+FORMATO:
+    --------
     Request JSON:
         {
             "idCP": "1",
             "precio": 0.30,
             "ubicacion": "Madrid"
         }
-
     Response JSON:
         {
             "error": false,
@@ -107,7 +106,10 @@ def register_cp():
                 "authToken": "uuid-token..."
             }
         }
-    """
+"""
+@app.route('/register', methods=['POST'])
+def register_cp():
+    
     try:
         data = request.get_json()
         if not data or 'idCP' not in data:
@@ -147,12 +149,12 @@ def register_cp():
                  'CP_REGISTER', {'error': str(e)}, 'FAILED')
         return jsonify({"error": True, "message": f"Error interno: {e}"}), 500
 
-@app.route('/unregister/<id_cp>', methods=['DELETE'])
-def unregister_cp(id_cp):
-    """
+"""
     Da de baja un CP del sistema.
     El ID se pasa en la URL: DELETE /unregister/1
     """
+@app.route('/unregister/<id_cp>', methods=['DELETE'])
+def unregister_cp(id_cp):
     try:
         id_cp = str(id_cp)
 
@@ -185,11 +187,9 @@ def unregister_cp(id_cp):
                  {'error': str(e)}, 'FAILED')
         return jsonify({"error": True, "message": f"Error interno: {e}"}), 500
 
+# Obtiene el estado de registro de un CP
 @app.route('/status/<id_cp>', methods=['GET'])
 def get_cp_status(id_cp):
-    """
-    Obtiene el estado de registro de un CP.
-    """
     try:
         result = get_cp_from_central(id_cp)
 
@@ -202,9 +202,9 @@ def get_cp_status(id_cp):
     except Exception as e:
         return jsonify({"error": True, "message": f"Error: {e}"}), 500
 
+# Endpoint de health check
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Endpoint de health check."""
     # Verificar conexion con Central
     try:
         response = requests.get(f"{API_CENTRAL_BASE}/health", timeout=5)
@@ -222,8 +222,8 @@ def health_check():
 # MAIN
 # ======================================================================
 
+# Genera certificados autofirmados si no existen usando Python
 def generate_self_signed_cert():
-    """Genera certificados autofirmados si no existen usando Python."""
     if not os.path.exists(CERT_FILE) or not os.path.exists(KEY_FILE):
         print("[REGISTRY] Generando certificados SSL autofirmados...")
         try:
@@ -292,9 +292,9 @@ def generate_self_signed_cert():
             return False
     return True
 
+# Espera a que API_Central este disponible
 def wait_for_central():
-    """Espera a que API_Central este disponible."""
-    import time
+    
     print(f"[REGISTRY] Esperando conexion con API_Central ({API_CENTRAL_BASE})...")
     while True:
         try:
