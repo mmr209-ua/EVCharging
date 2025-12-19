@@ -39,11 +39,12 @@ class EVDriverApp:
         # Inicializar Kafka en segundo plano
         threading.Thread(target=self.init_kafka, daemon=True).start()
 
-    # -----------------------------
+    # ---------------------------------------
     # INICIALIZACION KAFKA (en segundo plano)
-    # -----------------------------
+    # ---------------------------------------
+
+    # Inicializa conexiones Kafka en segundo plano
     def init_kafka(self):
-        """Inicializa conexiones Kafka en segundo plano."""
         self.root.after(0, lambda: self.log("Conectando con Kafka..."))
         try:
             # Productor
@@ -259,6 +260,8 @@ class EVDriverApp:
     def listen_consumption(self):
         for msg in self.consumer_consumo:
             event = msg.value
+            self.root.after(0, lambda e=event: self.log(f"CP_CONSUMPTION recibido: {e}"))
+            
             id_cp = str(event.get("idCP"))
             conductor = str(event.get("conductor", ""))
             if conductor != str(self.driver_id):

@@ -173,35 +173,18 @@ async function fetchDrivers() {
         if (!transactionsRes.ok) throw new Error('Error fetching transactions');
 
         const drivers = await driversRes.json();
-        cachedTransactions = await transactionsRes.json();
-
-        renderDrivers(drivers, cachedTransactions);
+        const txData = await transactionsRes.json();
+        cachedTransactions = txData.transactions;
+        renderDrivers(drivers, cachedTransactions, txData.total_drivers);
     } catch (error) {
         console.error('Error fetching drivers:', error);
         throw error;
     }
 }
 
-function renderDrivers(drivers, transactions) {
-    // Calcular estadisticas por conductor
-    const driverStats = drivers.map(driver => {
-        const driverTx = transactions.filter(tx => tx.conductor === driver.idConductor);
-        const totalRecargas = driverTx.length;
-        const totalConsumo = driverTx.reduce((sum, tx) => sum + (tx.consumo || 0), 0);
-        const totalImporte = driverTx.reduce((sum, tx) => sum + (tx.importe || 0), 0);
-        const ultimaRecarga = driverTx.length > 0 ? driverTx[0].timestamp : null;
-
-        return {
-            idConductor: driver.idConductor,
-            recargas: totalRecargas,
-            consumo: totalConsumo,
-            importe: totalImporte,
-            ultimaRecarga: ultimaRecarga
-        };
-    });
-
+function renderDrivers(drivers, transactions, numDrivers) {
     // Actualizar contadores globales
-    const totalDrivers = drivers.length;
+    const totalDrivers = numDrivers ?? drivers.length;
     const totalRecargas = transactions.length;
     const totalConsumo = transactions.reduce((sum, tx) => sum + (tx.consumo || 0), 0);
     const totalImporte = transactions.reduce((sum, tx) => sum + (tx.importe || 0), 0);
@@ -210,26 +193,6 @@ function renderDrivers(drivers, transactions) {
     document.getElementById('total-recargas').textContent = totalRecargas;
     document.getElementById('total-consumo').textContent = totalConsumo.toFixed(2);
     document.getElementById('total-importe').textContent = totalImporte.toFixed(2);
-
-    // Renderizar tabla
-    const tbody = document.querySelector('#drivers-table tbody');
-
-    if (driverStats.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="no-data">No hay conductores registrados</td></tr>';
-        return;
-    }
-
-    tbody.innerHTML = driverStats.map(driver => {
-        return `
-            <tr>
-                <td><strong>${driver.idConductor}</strong></td>
-                <td>${driver.recargas}</td>
-                <td>${driver.consumo.toFixed(2)}</td>
-                <td>${driver.importe.toFixed(2)}</td>
-                <td>${driver.ultimaRecarga || 'N/A'}</td>
-            </tr>
-        `;
-    }).join('');
 }
 
 // ======================================================================
@@ -241,7 +204,7 @@ async function fetchTransactions() {
         const response = await fetch(`${API_BASE}/transactions?limit=50`);
         if (!response.ok) throw new Error('Error fetching transactions');
         const data = await response.json();
-        renderTransactions(data);
+        renderTransactions(data.transactions);
     } catch (error) {
         console.error('Error fetching transactions:', error);
         throw error;

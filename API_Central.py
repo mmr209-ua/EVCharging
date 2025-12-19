@@ -134,16 +134,13 @@ def get_cps():
 
     return jsonify(result), 200
 
+
+# Lista conductores registrados
 @app.route('/drivers', methods=['GET'])
 def get_drivers():
-    """
-    Lista conductores registrados.
-
-    Response:
-    [{"idConductor": 1}, {"idConductor": 2}]
-    """
     rows = db_fetchall("SELECT idConductor FROM CONDUCTOR")
     return jsonify(rows), 200
+
 
 @app.route('/transactions', methods=['GET'])
 def get_transactions():
@@ -174,7 +171,13 @@ def get_transactions():
         LIMIT ?
     """, (limit,))
 
-    return jsonify(rows), 200
+    count = db_fetchall("SELECT COUNT(DISTINCT conductor) as total FROM CONSUMO")
+    total_drivers = count[0]['total'] if count else 0
+
+    return jsonify({
+        "transactions": rows,
+        "total_drivers": total_drivers
+    }), 200
 
 @app.route('/weather_alert', methods=['POST'])
 def weather_alert():
