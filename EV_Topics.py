@@ -16,7 +16,9 @@ CP_STATUS = "CP_STATUS"                             # Estados de los CPs (activo
 CP_SUPPLY_COMPLETE = "CP_SUPPLY_COMPLETE"           # Fin de suministro
 
 # Topics de comunicación CP -> Central y Driver
-CP_CONSUMPTION = "CP_CONSUMPTION"                   # Información acerca del CP suminstrando en tiempo real (consumo, importe, id conductor)
+# Información acerca del CP suministrando en tiempo real (consumo, importe, id conductor)
+CP_CONSUMPTION = "CP_CONSUMPTION"                      # este canal está cifrado           
+CP_CONSUMPTION_TO_DRIVER = "CP_CONSUMPTION_TO_DRIVER"  # este no
 
 # Topics de comunicación Driver -> Central
 SUPPLY_REQUEST_TO_CENTRAL = "SUPPLY_REQUEST_TO_CENTRAL" 

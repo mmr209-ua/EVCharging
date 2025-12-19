@@ -178,6 +178,12 @@ def main():
                     "importe": precio_actual_envio,
                     "conductor": driver_actual_envio
                 })
+                producer.send(CP_CONSUMPTION_TO_DRIVER, {
+                    "idCP": cp_id,
+                    "consumo": consumo_actual_envio,
+                    "importe": precio_actual_envio,
+                    "conductor": driver_actual_envio
+                })
                 print(f"[ENGINE {cp_id}] +0.5 kWh -> Total {consumo_actual_envio} kWh / {precio_actual_envio} EUR")
             except Exception as e:
                 print(f"[ENGINE {cp_id}] Error enviando consumo en tiempo real: {e}")

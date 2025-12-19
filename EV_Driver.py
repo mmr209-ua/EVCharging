@@ -6,6 +6,7 @@ from kafka import KafkaProducer, KafkaConsumer, TopicPartition
 from EV_Topics import *
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+from crypto_utils import decrypt_message
 
 class EVDriverApp:
     def __init__(self, root, broker, driver_id):
@@ -96,7 +97,7 @@ class EVDriverApp:
                 **consumer_config
             )
             self.consumer_consumo = KafkaConsumer(
-                CP_CONSUMPTION,
+                CP_CONSUMPTION_TO_DRIVER,
                 group_id=f"driver_{self.driver_id}_consumo_{session_id}",
                 **consumer_config
             )
@@ -260,12 +261,12 @@ class EVDriverApp:
     def listen_consumption(self):
         for msg in self.consumer_consumo:
             event = msg.value
-            self.root.after(0, lambda e=event: self.log(f"CP_CONSUMPTION recibido: {e}"))
-            
             id_cp = str(event.get("idCP"))
             conductor = str(event.get("conductor", ""))
+
             if conductor != str(self.driver_id):
                 continue  # solo mostrar consumos del conductor actual
+            
             energia = float(event.get("consumo", 0))
             importe = float(event.get("importe", 0))
             self.consumo_actual[id_cp] = {"energia": energia, "importe": importe}
