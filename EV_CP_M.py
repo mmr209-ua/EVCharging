@@ -31,7 +31,6 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r') as f:
-                print(f"[CP_MONITOR] Configuración cargada desde {CONFIG_FILE}")
                 return json.load(f)
         except Exception as e:
             print(f"[CP_MONITOR] Error leyendo {CONFIG_FILE}: {e}")
@@ -85,21 +84,28 @@ def main():
 
     # Mandar mensajitos a central
     def send_to_central(msg):
-        nonlocal central_socket
+        nonlocal central_socket, config
         max_retries = 3
+
+        # Recargar configuración para detectar cambios en caliente del token
+        config = load_config()
+
+        # Incluir authToken en el mensaje antes de cifrar
+        msg_with_token = dict(msg)  # copia para no mutar el original
+        msg_with_token["authToken"] = config.get("authToken")
 
         # Cifrar mensaje si tenemos clave de cifrado
         encryption_key = config.get("encryption_key")
         if encryption_key and encrypt_message:
             try:
-                encrypted_data = encrypt_message(encryption_key, msg)
+                encrypted_data = encrypt_message(encryption_key, msg_with_token)
                 # Enviar mensaje cifrado con idCP para que Central pueda identificar la clave
                 msg_to_send = {"encrypted": encrypted_data, "idCP": cp_id}
             except Exception as e:
                 print(f"[CP_MONITOR {cp_id}] Error cifrando mensaje: {e}")
-                msg_to_send = msg  # Fallback sin cifrar
+                msg_to_send = msg_with_token  # Fallback sin cifrar
         else:
-            msg_to_send = msg
+            msg_to_send = msg_with_token
 
         # Intentarlo varias veces
         for attempt in range(max_retries):
@@ -117,8 +123,8 @@ def main():
                     print(f"[CP_MONITOR {cp_id}] No se pudo enviar mensaje despues de {max_retries} intentos")
                     return False
         return False
-
-    central_socket = None
+    
+    central_socket = None 
     central_connected = False
 
     # =====================================================
@@ -314,10 +320,44 @@ def main():
     # REGISTRO INICIAL EN CENTRAL (si ya está autenticado)
     # =====================================================
 
+    # Hilo para escuchar respuestas de CENTRAL (errores de token, ordenes, etc.)
+    token_invalido = threading.Event()
+
+    def escuchar_central():
+        nonlocal central_socket, central_connected, config
+        try:
+            conn_file = central_socket.makefile('r', encoding='utf-8')
+            while central_connected and not token_invalido.is_set():
+                try:
+                    line = conn_file.readline()
+                    if not line:
+                        break
+                    line = line.strip()
+                    if not line:
+                        continue
+                    msg = json.loads(line)
+                    if msg.get("type") == "error" and msg.get("error") == "TOKEN_INVALIDO":
+                        print(f"\n[CP_MONITOR {cp_id}] *** ERROR: TOKEN INVALIDO - SUMINISTRO DETENIDO ***")
+                        print(f"[CP_MONITOR {cp_id}] El token ha sido modificado o revocado.")
+                        print(f"[CP_MONITOR {cp_id}] Debe volver a registrarse y autenticarse.")
+                        token_invalido.set()
+                        config["authenticated"] = False
+                        config["encryption_key"] = None
+                        save_config(config)
+                        break
+                except Exception as e:
+                    if central_connected:
+                        print(f"[CP_MONITOR {cp_id}] Error leyendo de CENTRAL: {e}")
+                    break
+        except Exception as e:
+            print(f"[CP_MONITOR {cp_id}] Error en hilo de escucha: {e}")
+
     if config.get("authenticated") and config.get("encryption_key"):
         print(f"[CP_MONITOR {cp_id}] Ya autenticado, conectando a CENTRAL...")
         central_socket = connect_to_central()
         central_connected = True
+        # Iniciar hilo de escucha
+        threading.Thread(target=escuchar_central, daemon=True).start()
         register_msg = {
             "type": "register",
             "idCP": cp_id,
@@ -426,8 +466,8 @@ def main():
                         print(f"[CP_MONITOR {cp_id}] ENGINE no responde, alerta enviada a CENTRAL")
                     fallo_prev = True
 
-                # Enviar estado AVERIADO
-                health_msg = {"type": "health", "idCP": cp_id, "salud": "KO"}
+                # Enviar estado AVERIADO (incluir token para validacion)
+                health_msg = {"type": "health", "idCP": cp_id, "salud": "KO", "authToken": config.get("authToken")}
                 send_to_central(health_msg)
 
                 if engine_conectado_prev:
@@ -435,7 +475,7 @@ def main():
 
             # Si el Engine responde OK
             else:
-                health_msg = {"type": "health", "idCP": cp_id, "salud": "OK"}
+                health_msg = {"type": "health", "idCP": cp_id, "salud": "OK", "authToken": config.get("authToken")}
                 send_to_central(health_msg)
 
                 if fallo_prev:

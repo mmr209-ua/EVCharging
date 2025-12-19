@@ -136,11 +136,11 @@ def descifrar_mensaje_kafka(event, conn):
 
     try:
         cur = conn.cursor()
-        cur.execute("SELECT encryption_key, authenticated FROM CP WHERE idCP=?", (id_cp,))
+        cur.execute("SELECT encryption_key, authenticated, auth_token FROM CP WHERE idCP=?", (id_cp,))
         row = cur.fetchone()
 
-        if not row:
-            safe_log(f"[CENTRAL] CP {id_cp} no registrado, mensaje ignorado")
+        if not row or not row[1] or not row[2]:
+            safe_log(f"[CENTRAL] CP {id_cp} no autenticado o sin token, mensaje ignorado")
             return None
 
         encryption_key = row[0]
@@ -423,13 +423,37 @@ def handle_tcp_client(socket_conn, addr, producer):
                 if msg_type == "register":
                     registrar_CP(msg, db_conn, addr)
                 elif msg_type == "authenticate":
-                    # Autenticacion de CP (Release 2)
                     response = autenticar_CP(msg, db_conn, addr)
                     socket_conn.sendall((json.dumps(response) + "\n").encode('utf-8'))
                 elif msg_type == "alert":
                     safe_log(f"[CENTRAL][TCP] ALERTA de MONITOR {msg.get('idCP')}: {msg.get('alerta')}")
                     log_audit('INCIDENT', addr[0], msg.get('idCP'), 'ALERT', {'alerta': msg.get('alerta')}, 'SUCCESS')
                 elif msg_type == "health":
+                    # Validar token antes de procesar health check
+                    id_cp = msg.get("idCP")
+                    auth_token = msg.get("authToken")
+                    if id_cp and auth_token:
+                        cur = db_conn.cursor()
+                        cur.execute("SELECT auth_token, authenticated FROM CP WHERE idCP = ?", (id_cp,))
+                        row = cur.fetchone()
+                        if row:
+                            stored_token = row[0]
+                            if stored_token != auth_token:
+                                safe_log(f"[CENTRAL][TCP] TOKEN INVALIDO para CP {id_cp} - Parando suministro")
+                                log_audit('SECURITY', addr[0], id_cp, 'INVALID_TOKEN', {'action': 'STOP_SUPPLY'}, 'FAILED')
+                                # Enviar orden de parar al CP
+                                try:
+                                    producer.send("CP_CONTROL", {"accion": "PARAR", "idCP": id_cp, "motivo": "TOKEN_INVALIDO"})
+                                    producer.flush()
+                                except Exception as e:
+                                    safe_log(f"[CENTRAL] Error enviando PARAR por token invalido: {e}")
+                                # Marcar CP como desactivado
+                                cur.execute("UPDATE CP SET estado = 'DESACTIVADO', authenticated = 0 WHERE idCP = ?", (id_cp,))
+                                db_conn.commit()
+                                actualizar_pantalla.set()
+                                # Notificar al CP
+                                socket_conn.sendall((json.dumps({"type": "error", "error": "TOKEN_INVALIDO", "action": "STOP"}) + "\n").encode('utf-8'))
+                                continue
                     comprobar_salud_CP({"idCP": msg.get("idCP"), "salud": msg.get("salud")}, db_conn, addr)
             except Exception as e:
                 safe_log(f"[CENTRAL][TCP] Error tramitando mensaje de {addr}: {e}")
